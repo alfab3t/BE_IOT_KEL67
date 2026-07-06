@@ -1,0 +1,300 @@
+using astratech_apps_backend.DTOs.Iot.Request;
+using astratech_apps_backend.Helpers;
+using astratech_apps_backend.Repositories.Interfaces;
+using astratech_apps_backend.Services.Implementations;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
+
+namespace astratech_apps_backend.Controllers
+{
+    [ApiController]
+    [Route("api/[controller]")]
+    [Authorize]
+    public sealed class IotController(IIotRepository repo, MqttBackgroundService mqttService) : ControllerBase
+    {
+        private readonly IIotRepository _repo = repo;
+        private readonly MqttBackgroundService _mqttService = mqttService;
+
+        private string? GetCurrentUsername() => User.FindFirstValue("namaakun");
+
+
+        [HttpGet("devices")]
+        [RequiresPermission("perangkat_iot.view")]
+        public async Task<IActionResult> GetAllDevices([FromQuery] GetAllDevicesRequest dto)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var (list, totalData) = await _repo.GetAllDevicesAsync(dto);
+            var response = new 
+            {
+                Data = list,
+                TotalData = totalData,
+                TotalHalaman = ((totalData - 1) / dto.PageSize) + 1
+            };
+
+            return Ok(response);
+        }
+
+        [HttpGet("devices/{id}")]
+        [RequiresPermission("perangkat_iot.view")]
+        public async Task<IActionResult> GetDeviceById(string id)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var device = await _repo.GetDeviceByIdAsync(id);
+            if (device == null) return NotFound(new { message = "Device tidak ditemukan." });
+
+            return Ok(device);
+        }
+
+        [HttpPost("devices")]
+        [RequiresPermission("perangkat_iot.create")]
+        public async Task<IActionResult> CreateDevice([FromBody] CreateDeviceRequest dto)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var newId = await _repo.CreateDeviceAsync(dto, username);
+            if (string.IsNullOrEmpty(newId)) 
+                return BadRequest(new { message = "Gagal menambahkan device baru." });
+
+            return Ok(new { message = "Device berhasil disimpan.", id = newId });
+        }
+
+        [HttpPut("devices")]
+        [RequiresPermission("perangkat_iot.edit")]
+        public async Task<IActionResult> UpdateDevice([FromBody] UpdateDeviceRequest dto)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var success = await _repo.UpdateDeviceAsync(dto, username);
+            if (!success) return NotFound(new { message = "Device tidak ditemukan." });
+
+            return Ok(new { message = "Device berhasil diupdate." });
+        }
+
+        [HttpPatch("devices/{id}/status")]
+        [RequiresPermission("perangkat_iot.control")]
+        public async Task<IActionResult> SetDeviceStatus(string id)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            // Baca body secara raw untuk menghindari error JSON parsing
+            using var reader = new StreamReader(Request.Body);
+            var rawBody = await reader.ReadToEndAsync();
+            var status = rawBody.Trim().Replace("\"", ""); // Hapus tanda kutip jika ada
+
+            var success = await _repo.ToggleDeviceStatusAsync(id, status, username);
+            if (!success) return NotFound(new { message = "Device tidak ditemukan." });
+
+            // Publish ke MQTT agar perangkat fisik menyalakan/mematikan saklar
+            var device = await _repo.GetDeviceByIdAsync(id);
+            if (device != null)
+            {
+                string mac = device.MacAddress;
+                // Jika Lampu dan Sensor berada di satu board fisik ESP8266 yang sama (berbagi satu MAC address)
+                if (id == "DEV_LAMP01")
+                {
+                    var tempDevice = await _repo.GetDeviceByIdAsync("DEV_TEMP01");
+                    if (tempDevice != null && !string.IsNullOrEmpty(tempDevice.MacAddress))
+                    {
+                        mac = tempDevice.MacAddress;
+                    }
+                }
+
+                if (!string.IsNullOrEmpty(mac))
+                {
+                    string topic = $"device/{mac}/control";
+                    await _mqttService.PublishMessageAsync(topic, status);
+                }
+            }
+
+            return Ok(new { message = "Status device berhasil diubah." });
+        }
+
+        [HttpPatch("devices/{id}/location")]
+        [RequiresPermission("perangkat_iot.edit")]
+        public async Task<IActionResult> SetDeviceLocation(string id, [FromBody] int locationId)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var success = await _repo.UpdateDeviceLocationAsync(id, locationId, username);
+            if (!success) return BadRequest(new { message = "Gagal memindahkan lokasi device." });
+
+            return Ok(new { message = "Lokasi device berhasil diperbarui." });
+        }
+
+
+        [HttpGet("locations")]
+        [RequiresPermission("lokasi_iot.view")]
+        public async Task<IActionResult> GetAllLocations([FromQuery] string? keyword, [FromQuery] string? status)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var list = await _repo.GetAllLocationsAsync(keyword, status);
+            return Ok(list);
+        }
+
+        [HttpPost("locations")]
+        [RequiresPermission("lokasi_iot.create")]
+        public async Task<IActionResult> CreateLocation([FromBody] CreateLocationRequest dto)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var newId = await _repo.CreateLocationAsync(dto, username);
+            if (newId == 0) return BadRequest(new { message = "Gagal menambahkan lokasi baru." });
+
+            return Ok(new { message = "Lokasi berhasil disimpan.", id = newId });
+        }
+
+        [HttpPut("locations")]
+        [RequiresPermission("lokasi_iot.edit")]
+        public async Task<IActionResult> UpdateLocation([FromBody] UpdateLocationRequest dto)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var success = await _repo.UpdateLocationAsync(dto, username);
+            if (!success) return NotFound(new { message = "Lokasi tidak ditemukan." });
+
+            return Ok(new { message = "Lokasi berhasil diperbarui." });
+        }
+
+        [HttpPatch("locations/{id}/status")]
+        [RequiresPermission("lokasi_iot.edit")]
+        public async Task<IActionResult> SetLocationStatus(int id)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var success = await _repo.ToggleLocationStatusAsync(id, username);
+            if (!success) return NotFound(new { message = "Lokasi tidak ditemukan." });
+
+            return Ok(new { message = "Status lokasi berhasil diubah." });
+        }
+
+
+        [HttpPost("telemetry/inject")]
+        [AllowAnonymous]
+        public async Task<IActionResult> InjectTelemetry([FromBody] InsertTelemetryRequest dto)
+        {
+            var success = await _repo.InsertTelemetryAsync(dto);
+            if (!success) return BadRequest(new { message = "Gagal menginjeksi data telemetri." });
+
+            return Ok(new { message = "Data telemetri berhasil diinjeksi." });
+        }
+
+
+        [HttpGet("dashboard/latest")]
+        [RequiresPermission("dashboard_iot.view")]
+        public async Task<IActionResult> GetDashboardLatest()
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var data = await _repo.GetDashboardLatestAsync(username);
+            return Ok(data);
+        }
+
+        [HttpGet("dashboard/graph/{deviceId}")]
+        [RequiresPermission("dashboard_iot.view")]
+        public async Task<IActionResult> GetDashboardGraph(string deviceId, [FromQuery] string period = "Daily")
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var data = await _repo.GetDashboardGraphAsync(deviceId, period);
+            return Ok(data);
+        }
+
+
+        [HttpPost("access/assign")]
+        [RequiresPermission("perangkat_iot.edit")]
+        public async Task<IActionResult> AssignAccess([FromQuery] string targetUsername, [FromQuery] string deviceId)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var success = await _repo.AssignAccessAsync(targetUsername, deviceId, username);
+            if (!success) return BadRequest(new { message = "Gagal memberikan hak akses perangkat." });
+
+            return Ok(new { message = "Akses perangkat berhasil diberikan." });
+        }
+
+        [HttpDelete("access/remove")]
+        [RequiresPermission("perangkat_iot.edit")]
+        public async Task<IActionResult> RemoveAccess([FromQuery] string targetUsername, [FromQuery] string deviceId)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var success = await _repo.RemoveAccessAsync(targetUsername, deviceId);
+            if (!success) return BadRequest(new { message = "Gagal menghapus hak akses perangkat." });
+
+            return Ok(new { message = "Akses perangkat berhasil dicabut." });
+        }
+
+
+        [HttpGet("notifications")]
+        [RequiresPermission("notifikasi_iot.view")]
+        public async Task<IActionResult> GetNotifications()
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var data = await _repo.GetNotificationsAsync(username);
+            return Ok(data);
+        }
+
+        [HttpPatch("notifications/{id}/read")]
+        [RequiresPermission("notifikasi_iot.view")]
+        public async Task<IActionResult> MarkNotificationRead(long id)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var success = await _repo.MarkNotificationAsReadAsync(id);
+            if (!success) return NotFound(new { message = "Notifikasi tidak ditemukan." });
+
+            return Ok(new { message = "Notifikasi berhasil ditandai dibaca." });
+        }
+
+        [HttpPost("notifications/read-bulk")]
+        [RequiresPermission("notifikasi_iot.view")]
+        public async Task<IActionResult> MarkNotificationsReadBulk([FromBody] List<long> ids)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            if (ids == null || ids.Count == 0) return BadRequest(new { message = "Tidak ada id yang dikirim." });
+
+            var success = await _repo.MarkNotificationsAsReadBulkAsync(ids);
+            if (!success) return BadRequest(new { message = "Gagal menandai notifikasi." });
+
+            return Ok(new { message = "Notifikasi berhasil ditandai dibaca." });
+        }
+
+        [HttpPost("notifications/delete-bulk")]
+        [RequiresPermission("notifikasi_iot.view")]
+        public async Task<IActionResult> DeleteNotificationsBulk([FromBody] List<long> ids)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            if (ids == null || ids.Count == 0) return BadRequest(new { message = "Tidak ada id yang dikirim." });
+
+            var success = await _repo.DeleteNotificationsBulkAsync(ids);
+            if (!success) return BadRequest(new { message = "Gagal menghapus notifikasi." });
+
+            return Ok(new { message = "Notifikasi berhasil dihapus." });
+        }
+    }
+}

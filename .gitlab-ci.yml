@@ -1,0 +1,78 @@
+image: mcr.microsoft.com/dotnet/sdk:8.0
+
+variables:
+  SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  # Defines the location of the analysis task cache
+  GIT_DEPTH: "0"  # Tells git to fetch all the branches of the project, required by the analysis task
+  DOCKER_DRIVER: overlay2
+  IMAGE_NAME: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+  LATEST_IMAGE: $CI_REGISTRY_IMAGE:latest
+
+stages:
+  - build-sonar
+  - docker-build-oprasional
+  - deploy-oprasional
+
+build-sonar:
+  stage: build-sonar
+  tags:
+    - gl-runner
+  cache:
+    policy: pull-push
+    key: "sonar-cache-$CI_COMMIT_REF_SLUG"
+    paths:
+      - "${SONAR_USER_HOME}/cache"
+      - sonar-scanner/
+  script:
+    - |
+      if ! dotnet tool list --global | grep dotnet-sonarscanner; then
+        dotnet tool install --global dotnet-sonarscanner
+      else
+        dotnet tool update --global dotnet-sonarscanner
+      fi
+
+      export PATH="$PATH:$HOME/.dotnet/tools"
+
+      dotnet sonarscanner begin \
+        /k:"astradualsystem_astratech-apps-backend_863a7eee-e81d-4fe9-8d77-af33da7e08cc" \
+        /v:"$CI_COMMIT_SHORT_SHA" \
+        /d:sonar.token="$SONAR_TOKEN" \
+        /d:sonar.host.url="$SONAR_HOST_URL" \
+        /d:sonar.exclusions=".gitlab-ci.yml,.gitlab-ci/**/*,*.gitlab-ci.yml,Dockerfile*,*.dockerfile,.dockerignore,docker-compose*.yml"
+
+      dotnet build --no-incremental
+
+      dotnet sonarscanner end /d:sonar.login="$SONAR_TOKEN"
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == 'merge_request_event'
+    - if: $CI_COMMIT_BRANCH == 'master'
+    - if: $CI_COMMIT_BRANCH == 'main'
+    - if: $CI_COMMIT_BRANCH == 'develop'
+
+docker-build-oprasional:
+  stage: docker-build-oprasional
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  tags:
+    - gl-runner
+  script:
+    - echo "{\"auths\":{\"https://index.docker.io/v1/\":{\"username\":\"$DOCKER_USERNAME\",\"password\":\"$DOCKER_PASSWORD\"}}}" > /kaniko/.docker/config.json
+    - /kaniko/executor --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --destination=$DOCKER_USERNAME/backendtemplate:$CI_COMMIT_SHA
+    - /kaniko/executor --context $CI_PROJECT_DIR --dockerfile $CI_PROJECT_DIR/Dockerfile --destination=$DOCKER_USERNAME/backendtemplate:latest
+  rules:
+    - if: $CI_COMMIT_BRANCH == "main"
+
+deploy-oprasional:
+  stage: deploy-oprasional
+  when: on_success
+  needs: ["docker-build-oprasional"]
+  only: 
+    - main
+  image: curlimages/curl:latest
+  tags:
+    - gl-runner
+  services:
+    - docker:dind
+  script:
+    - curl --user Developer:$JENKINS_PWD $JENKINS_DEPLOY_URL
