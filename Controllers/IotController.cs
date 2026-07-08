@@ -337,5 +337,21 @@ namespace astratech_apps_backend.Controllers
 
             return Ok(new { message = "Perintah AC berhasil dikirim." });
         }
+
+        [HttpGet("dashboard/graph-by-date/{deviceId}")]
+        [RequiresPermission("perangkat_iot.view")]
+        public async Task<IActionResult> GetDashboardGraphByDate(string deviceId, [FromQuery] string date)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            if (!DateTime.TryParse(date, out DateTime selectedDate))
+            {
+                return BadRequest(new { message = "Format tanggal salah. Gunakan yyyy-MM-dd." });
+            }
+
+            var data = await _repo.GetDashboardGraphByDateAsync(deviceId, selectedDate);
+            return Ok(data);
+        }
     }
 }

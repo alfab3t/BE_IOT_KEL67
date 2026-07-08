@@ -481,5 +481,26 @@ namespace astratech_apps_backend.Repositories.Implementations
                 return false;
             }
         }
+
+        public async Task<IEnumerable<GraphPoint>> GetDashboardGraphByDateAsync(string deviceId, DateTime selectedDate)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var result = await conn.QueryAsync<dynamic>("dbo.IOT_SP_Dashboard_GetGraphByDate", new { dev_id = deviceId, SelectedDate = selectedDate }, commandType: CommandType.StoredProcedure);
+                return result.Select(row => new GraphPoint
+                {
+                    AverageValue = (decimal)(row.AverageValue != null ? row.AverageValue : 0m),
+                    MaximumValue = (decimal)(row.MaximumValue != null ? row.MaximumValue : 0m),
+                    MinimumValue = (decimal)(row.MinimumValue != null ? row.MinimumValue : 0m),
+                    LabelText = (string)row.LabelText
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mendapatkan data grafik per tanggal: {DeviceId}", deviceId);
+                return [];
+            }
+        }
     }
 }

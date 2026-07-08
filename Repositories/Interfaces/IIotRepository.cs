@@ -20,6 +20,7 @@ namespace astratech_apps_backend.Repositories.Interfaces
         Task<bool> InsertTelemetryAsync(InsertTelemetryRequest dto);
         Task<IEnumerable<Device>> GetDashboardLatestAsync(string? username);
         Task<IEnumerable<GraphPoint>> GetDashboardGraphAsync(string deviceId, string period);
+        Task<IEnumerable<GraphPoint>> GetDashboardGraphByDateAsync(string deviceId, DateTime selectedDate);
 
         Task<bool> AssignAccessAsync(string targetUsername, string deviceId, string createdBy);
         Task<bool> RemoveAccessAsync(string targetUsername, string deviceId);
