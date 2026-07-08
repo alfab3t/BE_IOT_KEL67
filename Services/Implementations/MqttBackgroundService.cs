@@ -66,7 +66,14 @@ namespace astratech_apps_backend.Services.Implementations
                             "PMGedungB",
                             "PMGedungC",
                             "PMGedungD",
-                            "esp32/water"
+                            "esp32/water",
+                            "valTempS3",
+                            "valHumiS3",
+                            "setPowerS3",
+                            "setTempS3",
+                            "setModeS3",
+                            "setFanS3",
+                            "setSwingS3"
                         };
 
                         var subscribeOptionsBuilder = _mqttFactory.CreateSubscribeOptionsBuilder();
@@ -134,12 +141,21 @@ namespace astratech_apps_backend.Services.Implementations
                     {
                         double kw = powerElement.GetDouble();
                         double watt = kw * 1000.0; // Konversi kW ke Watt agar konsisten dengan DB/UI
-                        await SaveTelemetryToDatabaseAsync(targetDevId, watt, "Power");
-                        
-                        // Juga simpan ke DEV_PWR01 untuk kompabilitas ke belakang bagi Gedung C
-                        if (gedungChar == "C")
+
+                        // Validasi agar tidak terjadi overflow di kolom decimal database
+                        if (double.IsNaN(watt) || double.IsInfinity(watt) || watt > 99999999999999.0 || watt < -99999999999999.0)
                         {
-                            await SaveTelemetryToDatabaseAsync("DEV_PWR01", watt, "Power");
+                            _logger.LogWarning("Mengabaikan data telemetri PMGedung{GedungChar} karena nilai tidak valid/overflow: {Value} Watt", gedungChar, watt);
+                        }
+                        else
+                        {
+                            await SaveTelemetryToDatabaseAsync(targetDevId, watt, "Power");
+                            
+                            // Juga simpan ke DEV_PWR01 untuk kompabilitas ke belakang bagi Gedung C
+                            if (gedungChar == "C")
+                            {
+                                await SaveTelemetryToDatabaseAsync("DEV_PWR01", watt, "Power");
+                            }
                         }
                     }
                     return;
@@ -174,6 +190,8 @@ namespace astratech_apps_backend.Services.Implementations
                     }
                     return;
                 }
+
+
 
                 // Cek jika menggunakan pola topik baru device/+/sensor/+ atau device/+/status
                 string[] parts = topic.Split('/');
@@ -211,55 +229,62 @@ namespace astratech_apps_backend.Services.Implementations
                 double valueOld = 0.0;
                 bool isNumeric = double.TryParse(payload, out valueOld);
 
-                if ("valTemp0011".Equals(topic))
+                if ("valTemp0011".Equals(topic) || "valTempS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        await SaveTelemetryToDatabaseAsync("DEV_TEMP01", valueOld, "Temperature");
+                        string targetId = "valTempS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                        await SaveTelemetryToDatabaseAsync(targetId, valueOld, "Temperature");
                     }
                 }
-                else if ("valHumi00112".Equals(topic))
+                else if ("valHumi00112".Equals(topic) || "valHumiS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        await SaveTelemetryToDatabaseAsync("DEV_TEMP01", valueOld, "Humidity");
+                        string targetId = "valHumiS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                        await SaveTelemetryToDatabaseAsync(targetId, valueOld, "Humidity");
                     }
                 }
-                else if ("setPower00121".Equals(topic))
+                else if ("setPower00121".Equals(topic) || "setPowerS3".Equals(topic))
                 {
                     string status = "OFF";
                     if (payload == "1" || payload.Equals("ON", StringComparison.OrdinalIgnoreCase) || payload == "1.0")
                     {
                         status = "ON";
                     }
-                    await UpdateDeviceStatusAsync("DEV_LAMP01", status);
+                    string targetId = "setPowerS3".Equals(topic) ? "DEV_AC01" : "DEV_LAMP01";
+                    await UpdateDeviceStatusAsync(targetId, status);
                 }
-                else if ("setTemp00122".Equals(topic))
+                else if ("setTemp00122".Equals(topic) || "setTempS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        await UpdateDeviceLimitMinAsync("DEV_TEMP01", valueOld);
+                        string targetId = "setTempS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                        await UpdateDeviceLimitMinAsync(targetId, valueOld);
                     }
                 }
-                else if ("setMode00124".Equals(topic))
+                else if ("setMode00124".Equals(topic) || "setModeS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        await SaveTelemetryToDatabaseAsync("DEV_TEMP01", valueOld, "Mode");
+                        string targetId = "setModeS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                        await SaveTelemetryToDatabaseAsync(targetId, valueOld, "Mode");
                     }
                 }
-                else if ("setFan00123".Equals(topic))
+                else if ("setFan00123".Equals(topic) || "setFanS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        await SaveTelemetryToDatabaseAsync("DEV_TEMP01", valueOld, "FanSpeed");
+                        string targetId = "setFanS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                        await SaveTelemetryToDatabaseAsync(targetId, valueOld, "FanSpeed");
                     }
                 }
-                else if ("setSwing00125".Equals(topic))
+                else if ("setSwing00125".Equals(topic) || "setSwingS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        await SaveTelemetryToDatabaseAsync("DEV_TEMP01", valueOld, "SwingDirection");
+                        string targetId = "setSwingS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                        await SaveTelemetryToDatabaseAsync(targetId, valueOld, "SwingDirection");
                     }
                 }
             }

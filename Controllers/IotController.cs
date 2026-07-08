@@ -296,5 +296,46 @@ namespace astratech_apps_backend.Controllers
 
             return Ok(new { message = "Notifikasi berhasil dihapus." });
         }
+
+        [HttpPost("devices/control-ac")]
+        [RequiresPermission("perangkat_iot.control")]
+        public async Task<IActionResult> ControlAc([FromQuery] string topic, [FromQuery] string payload)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            await _mqttService.PublishMessageAsync(topic, payload);
+
+            // Sync with Database
+            if (topic == "setPower00121" || topic == "setPowerS3")
+            {
+                string dbStatus = (payload == "1" || payload.Equals("ON", StringComparison.OrdinalIgnoreCase)) ? "ON" : "OFF";
+                string targetId = (topic == "setPowerS3") ? "DEV_AC01" : "DEV_LAMP01";
+                await _repo.ToggleDeviceStatusAsync(targetId, dbStatus, username);
+            }
+            else if (topic == "setTemp00122" || topic == "setTempS3")
+            {
+                if (double.TryParse(payload, out double tempVal))
+                {
+                    string targetId = (topic == "setTempS3") ? "DEV_TEMP02" : "DEV_TEMP01";
+                    var device = await _repo.GetDeviceByIdAsync(targetId);
+                    if (device != null)
+                    {
+                        var updateRequest = new UpdateDeviceRequest
+                        {
+                            Id = device.Id,
+                            Name = device.Name,
+                            Category = device.Category,
+                            LimitMin = (decimal)tempVal,
+                            LimitMax = device.LimitMax ?? 28m,
+                            Photo = device.Photo
+                        };
+                        await _repo.UpdateDeviceAsync(updateRequest, username);
+                    }
+                }
+            }
+
+            return Ok(new { message = "Perintah AC berhasil dikirim." });
+        }
     }
 }

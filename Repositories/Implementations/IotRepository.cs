@@ -452,9 +452,11 @@ namespace astratech_apps_backend.Repositories.Implementations
         {
             try
             {
+                if (ids == null || ids.Count == 0) return true;
+                string idsStr = string.Join(",", ids);
                 await using var conn = new SqlConnection(_conn);
-                var rows = await conn.ExecuteAsync("UPDATE dbo.IOT_TRX_Notification SET not_status = 'Read' WHERE not_id IN @ids", new { ids = ids });
-                return rows > 0;
+                await conn.ExecuteAsync("dbo.IOT_SP_Notification_ReadBulk", new { Ids = idsStr }, commandType: CommandType.StoredProcedure);
+                return true;
             }
             catch (Exception ex)
             {
@@ -467,9 +469,11 @@ namespace astratech_apps_backend.Repositories.Implementations
         {
             try
             {
+                if (ids == null || ids.Count == 0) return true;
+                string idsStr = string.Join(",", ids);
                 await using var conn = new SqlConnection(_conn);
-                var rows = await conn.ExecuteAsync("DELETE FROM dbo.IOT_TRX_Notification WHERE not_id IN @ids", new { ids = ids });
-                return rows > 0;
+                await conn.ExecuteAsync("dbo.IOT_SP_Notification_DeleteBulk", new { Ids = idsStr }, commandType: CommandType.StoredProcedure);
+                return true;
             }
             catch (Exception ex)
             {
