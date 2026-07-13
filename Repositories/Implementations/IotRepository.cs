@@ -163,6 +163,24 @@ namespace astratech_apps_backend.Repositories.Implementations
             }
         }
 
+        public async Task<bool> ToggleDeviceActiveAsync(string id, bool isActive, string username)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var rows = await conn.ExecuteScalarAsync<int>(
+                    "IOT_SP_Device_ToggleActive",
+                    new { DeviceId = id, IsActive = isActive },
+                    commandType: CommandType.StoredProcedure);
+                return rows > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mengubah status aktif device: {Id} menjadi {IsActive} | User: {Username}", id, isActive, username);
+                return false;
+            }
+        }
+
         public async Task<bool> UpdateDeviceLocationAsync(string deviceId, int locationId, string username)
         {
             try
@@ -311,9 +329,10 @@ namespace astratech_apps_backend.Repositories.Implementations
                     Name = (string)row.dev_name,
                     Category = (string)row.dev_category,
                     Status = (string)row.dev_status,
+                    IsActive = (bool)row.dev_is_active,
                     LimitMin = (decimal?)(row.LatestValue != null ? row.LatestValue : null),
                     LimitMax = (decimal?)(row.LatestHumidity != null ? row.LatestHumidity : null),
-                    Photo = (string)row.ValueType, 
+                    Photo = (string)row.ValueType,
                     Gedung = (string)row.loc_gedung,
                     Lantai = (string)row.loc_lantai,
                     Ruangan = (string)row.loc_ruangan
@@ -323,6 +342,21 @@ namespace astratech_apps_backend.Repositories.Implementations
             {
                 _logger.LogError(ex, "Gagal mendapatkan data dashboard terbaru.");
                 return [];
+            }
+        }
+
+        public async Task<DashboardStats> GetDashboardStatsAsync(string? username)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var result = await conn.QueryFirstOrDefaultAsync<DashboardStats>("IOT_SP_Dashboard_GetStats", new { Username = username }, commandType: CommandType.StoredProcedure);
+                return result ?? new DashboardStats();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mendapatkan data statistik dashboard dari stored procedure.");
+                return new DashboardStats();
             }
         }
 
@@ -343,6 +377,27 @@ namespace astratech_apps_backend.Repositories.Implementations
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Gagal mendapatkan data grafik telemetri untuk device: {DeviceId}", deviceId);
+                return [];
+            }
+        }
+
+        public async Task<IEnumerable<GraphPoint>> GetDashboardGraphAverageAsync(string category, string period)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var result = await conn.QueryAsync<dynamic>("IOT_SP_Dashboard_GetGraphAverage", new { Category = category, Period = period }, commandType: CommandType.StoredProcedure);
+                return result.Select(row => new GraphPoint
+                {
+                    AverageValue = (decimal)row.AverageValue,
+                    MaximumValue = (decimal)row.MaximumValue,
+                    MinimumValue = (decimal)row.MinimumValue,
+                    LabelText = (string)row.LabelText
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mendapatkan data grafik rata-rata telemetri untuk kategori: {Category}", category);
                 return [];
             }
         }
@@ -438,8 +493,8 @@ namespace astratech_apps_backend.Repositories.Implementations
             try
             {
                 await using var conn = new SqlConnection(_conn);
-                var rows = await conn.ExecuteAsync("IOT_SP_Notification_Read", new { not_id = notId }, commandType: CommandType.StoredProcedure);
-                return rows > 0;
+                var affectedRows = await conn.ExecuteScalarAsync<int>("IOT_SP_Notification_Read", new { not_id = notId }, commandType: CommandType.StoredProcedure);
+                return affectedRows > 0;
             }
             catch (Exception ex)
             {
@@ -500,6 +555,221 @@ namespace astratech_apps_backend.Repositories.Implementations
             {
                 _logger.LogError(ex, "Gagal mendapatkan data grafik per tanggal: {DeviceId}", deviceId);
                 return [];
+            }
+        }
+
+        public async Task<bool> DeleteDeviceAsync(string id, string username)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var rows = await conn.ExecuteScalarAsync<int>(
+                    "IOT_SP_Device_Delete",
+                    new { dev_id = id, DeletedBy = username },
+                    commandType: CommandType.StoredProcedure);
+                return rows > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal menghapus device: {Id} | User: {Username}", id, username);
+                return false;
+            }
+        }
+
+        // ── User Management ──────────────────────────────────────────────────
+
+        public async Task<UserListResponse> GetAllUsersAsync(string? keyword, string? roleId, string? status)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var parameters = new { Keyword = keyword, RoleId = roleId, Status = status };
+                
+                using var multi = await conn.QueryMultipleAsync("IOT_SP_User_GetAll", parameters, commandType: CommandType.StoredProcedure);
+                
+                var usersRaw = await multi.ReadAsync<dynamic>();
+                var rolesRaw = await multi.ReadAsync<dynamic>();
+
+                var users = usersRaw.Select(row => new AppUser
+                {
+                    Username  = (string)row.username,
+                    FullName  = (string)row.fullName,
+                    Email     = (string)(row.email ?? ""),
+                    Status    = (string)row.status,
+                    RoleName  = (string)row.roleName,
+                    RoleId    = (string)row.roleId,
+                    Photo     = (string?)row.photo
+                }).ToList();
+
+                var roles = rolesRaw.Select(row => new RoleCount
+                {
+                    RoleId   = (string)row.RoleId,
+                    RoleName = (string)row.RoleName,
+                    Count    = (int)row.Count
+                }).ToList();
+
+                return new UserListResponse
+                {
+                    Users = users,
+                    Roles = roles
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mendapatkan daftar pengguna.");
+                return new UserListResponse();
+            }
+        }
+
+        public async Task<AppUser?> GetUserDetailAsync(string username, string? viewerUsername = null)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                using var multi = await conn.QueryMultipleAsync(
+                    "IOT_SP_User_GetDetail",
+                    new { Username = username, ViewerUsername = viewerUsername },
+                    commandType: CommandType.StoredProcedure);
+
+                var userRow = await multi.ReadFirstOrDefaultAsync<dynamic>();
+                if (userRow == null) return null;
+
+                var devices = (await multi.ReadAsync<dynamic>()).Select(d => new DeviceAccess
+                {
+                    DeviceId   = (string)d.dev_id,
+                    DeviceName = (string)d.dev_name,
+                    Category   = (string)d.dev_category,
+                    Status     = (string)d.dev_status
+                }).ToList();
+
+                return new AppUser
+                {
+                    Username  = (string)userRow.username,
+                    FullName  = (string)userRow.fullName,
+                    Email     = (string)(userRow.email ?? ""),
+                    Status    = (string)userRow.status,
+                    RoleName  = (string)userRow.roleName,
+                    RoleId    = (string)userRow.roleId,
+                    Photo     = (string?)userRow.photo,
+                    CanManage = (bool)userRow.canManage,
+                    AccessibleDevices = devices
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mendapatkan detail pengguna: {Username}", username);
+                return null;
+            }
+        }
+
+        public async Task<bool> SetUserStatusAsync(string username, string status, string updatedBy)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var rows = await conn.ExecuteScalarAsync<int>(
+                    "IOT_SP_User_SetStatus",
+                    new { Username = username, Status = status, UpdatedBy = updatedBy },
+                    commandType: CommandType.StoredProcedure);
+                return rows > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mengubah status pengguna: {Username}", username);
+                return false;
+            }
+        }
+
+        public async Task<bool> CreateUserAsync(string username, string roleName, string status, string createdBy)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var rows = await conn.ExecuteScalarAsync<int>(
+                    "IOT_SP_User_Create",
+                    new { Username = username, RoleName = roleName, Status = status, CreatedBy = createdBy },
+                    commandType: CommandType.StoredProcedure);
+                return rows > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal membuat pengguna IoT baru: {Username}", username);
+                return false;
+            }
+        }
+
+        public async Task<bool> UpdateUserAsync(string username, string roleName, string status, string updatedBy)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var rows = await conn.ExecuteScalarAsync<int>(
+                    "IOT_SP_User_Update",
+                    new { Username = username, RoleName = roleName, Status = status, UpdatedBy = updatedBy },
+                    commandType: CommandType.StoredProcedure);
+                return rows > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mengupdate pengguna IoT: {Username}", username);
+                return false;
+            }
+        }
+
+        public async Task<bool> DeleteUserAsync(string username)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var rows = await conn.ExecuteScalarAsync<int>(
+                    "IOT_SP_User_Delete",
+                    new { Username = username },
+                    commandType: CommandType.StoredProcedure);
+                return rows > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal menghapus pengguna IoT: {Username}", username);
+                return false;
+            }
+        }
+
+        public async Task<ReportSummary> GetReportSummaryAsync(string period)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                using var multi = await conn.QueryMultipleAsync(
+                    "IOT_SP_Report_GetSummary",
+                    new { Period = period },
+                    commandType: CommandType.StoredProcedure);
+
+                var device  = await multi.ReadFirstOrDefaultAsync<dynamic>();
+                var temp    = await multi.ReadFirstOrDefaultAsync<dynamic>();
+                var hum     = await multi.ReadFirstOrDefaultAsync<dynamic>();
+                var power   = await multi.ReadFirstOrDefaultAsync<dynamic>();
+
+                return new ReportSummary
+                {
+                    Period        = period,
+                    TotalDevice   = device  != null ? (int)device.TotalDevice   : 0,
+                    DeviceOnline  = device  != null ? (int)device.DeviceOnline  : 0,
+                    DeviceOffline = device  != null ? (int)device.DeviceOffline : 0,
+                    TotalUsers    = device  != null ? (int)(device.TotalUsers ?? 0) : 0,
+
+                    AvgTemperature = temp   != null ? (decimal)temp.AvgTemperature : 0,
+                    MaxTemperature = temp   != null ? (decimal)temp.MaxTemperature : 0,
+                    MinTemperature = temp   != null ? (decimal)temp.MinTemperature : 0,
+                    AvgHumidity    = hum    != null ? (decimal)hum.AvgHumidity    : 0,
+                    MaxHumidity    = hum    != null ? (decimal)hum.MaxHumidity    : 0,
+                    MinHumidity    = hum    != null ? (decimal)hum.MinHumidity    : 0,
+                    TotalPowerKwh  = power  != null ? (decimal)power.TotalPowerKwh : 0,
+                };
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mengambil report summary, period: {Period}", period);
+                return new ReportSummary { Period = period };
             }
         }
     }

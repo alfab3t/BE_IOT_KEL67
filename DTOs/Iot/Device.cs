@@ -10,6 +10,7 @@ namespace astratech_apps_backend.DTOs.Iot
         public decimal? LimitMin { get; init; }
         public decimal? LimitMax { get; init; }
         public string? Photo { get; init; }
+        public bool IsActive { get; init; } = true;
         public int? LocationId { get; init; }
         public string? Gedung { get; init; }
         public string? Lantai { get; init; }

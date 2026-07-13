@@ -30,14 +30,34 @@ namespace astratech_apps_backend.Services.Implementations
                     return (false, [], "Username atau password tidak valid.");
                 }
 
-                var list = result.Select(row => new Aplikasi
-                {
-                    NamaAplikasi = (string)row.app_deskripsi,
-                    NamaRole = (string)row.rol_deskripsi,
-                    Root = (string)row.app_tautan,
-                    AppId = (string)row.app_id,
-                    RoleId = (string)row.rol_id,
-                    AppIcon = (string)row.app_icon
+                // Ambil mapping role khusus IoT dari tabel IOT_TRX_UserRole (jika ada)
+                var iotMapping = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                    "IOT_SP_User_GetIotRole",
+                    new { Username = username },
+                    commandType: CommandType.StoredProcedure
+                );
+
+                var list = result.Select(row => {
+                    var appId = (string)row.app_id;
+                    var roleId = (string)row.rol_id;
+                    var roleName = (string)row.rol_deskripsi;
+
+                    // Override jika aplikasinya IoT (APP09) dan ada mapping khusus
+                    if (appId == "APP09" && iotMapping != null)
+                    {
+                        roleId = (string)iotMapping.iot_role_id;
+                        roleName = (string)iotMapping.rol_deskripsi;
+                    }
+
+                    return new Aplikasi
+                    {
+                        NamaAplikasi = (string)row.app_deskripsi,
+                        NamaRole = roleName,
+                        Root = (string)row.app_tautan,
+                        AppId = appId,
+                        RoleId = roleId,
+                        AppIcon = (string)row.app_icon
+                    };
                 }).ToList();
 
                 return (true, list, null);
@@ -141,8 +161,10 @@ namespace astratech_apps_backend.Services.Implementations
             try
             {
                 await using var conn = new SqlConnection(_conn);
-                var sql = "UPDATE dbo.MST_User SET usr_foto = @Photo WHERE usr_id = @Username";
-                var rows = await conn.ExecuteAsync(sql, new { Photo = photoBase64, Username = username });
+                var rows = await conn.ExecuteScalarAsync<int>(
+                    "IOT_SP_User_UpdatePhoto",
+                    new { Username = username, Photo = photoBase64 },
+                    commandType: CommandType.StoredProcedure);
                 return rows > 0;
             }
             catch (Exception ex)
@@ -157,8 +179,10 @@ namespace astratech_apps_backend.Services.Implementations
             try
             {
                 await using var conn = new SqlConnection(_conn);
-                var sql = "SELECT TOP 1 usr_foto FROM dbo.MST_User WHERE usr_id = @Username";
-                return await conn.QueryFirstOrDefaultAsync<string>(sql, new { Username = username });
+                return await conn.QueryFirstOrDefaultAsync<string>(
+                    "IOT_SP_User_GetPhoto",
+                    new { Username = username },
+                    commandType: CommandType.StoredProcedure);
             }
             catch (Exception ex)
             {

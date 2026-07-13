@@ -106,6 +106,15 @@ namespace astratech_apps_backend.Controllers
                         mac = tempDevice.MacAddress;
                     }
                 }
+                // Jika AC Panasonic menggunakan board fisik ESP32-S3 yang sama
+                else if (id == "DEV_AC01")
+                {
+                    var tempDevice = await _repo.GetDeviceByIdAsync("DEV_TEMP02");
+                    if (tempDevice != null && !string.IsNullOrEmpty(tempDevice.MacAddress))
+                    {
+                        mac = tempDevice.MacAddress;
+                    }
+                }
 
                 if (!string.IsNullOrEmpty(mac))
                 {
@@ -115,6 +124,19 @@ namespace astratech_apps_backend.Controllers
             }
 
             return Ok(new { message = "Status device berhasil diubah." });
+        }
+
+        [HttpPatch("devices/{id}/active")]
+        [RequiresPermission("perangkat_iot.edit")]
+        public async Task<IActionResult> ToggleDeviceActive(string id, [FromBody] bool isActive)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var success = await _repo.ToggleDeviceActiveAsync(id, isActive, username);
+            if (!success) return NotFound(new { message = "Device tidak ditemukan." });
+
+            return Ok(new { message = isActive ? "Device berhasil diaktifkan." : "Device berhasil dinonaktifkan." });
         }
 
         [HttpPatch("devices/{id}/location")]
@@ -204,6 +226,17 @@ namespace astratech_apps_backend.Controllers
             return Ok(data);
         }
 
+        [HttpGet("dashboard/stats")]
+        [RequiresPermission("dashboard_iot.view")]
+        public async Task<IActionResult> GetDashboardStats()
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var data = await _repo.GetDashboardStatsAsync(username);
+            return Ok(data);
+        }
+
         [HttpGet("dashboard/graph/{deviceId}")]
         [RequiresPermission("dashboard_iot.view")]
         public async Task<IActionResult> GetDashboardGraph(string deviceId, [FromQuery] string period = "Daily")
@@ -212,6 +245,17 @@ namespace astratech_apps_backend.Controllers
             if (string.IsNullOrEmpty(username)) return Unauthorized();
 
             var data = await _repo.GetDashboardGraphAsync(deviceId, period);
+            return Ok(data);
+        }
+
+        [HttpGet("dashboard/graph-average")]
+        [RequiresPermission("dashboard_iot.view")]
+        public async Task<IActionResult> GetDashboardGraphAverage([FromQuery] string category, [FromQuery] string period = "Daily")
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var data = await _repo.GetDashboardGraphAverageAsync(category, period);
             return Ok(data);
         }
 
@@ -353,5 +397,126 @@ namespace astratech_apps_backend.Controllers
             var data = await _repo.GetDashboardGraphByDateAsync(deviceId, selectedDate);
             return Ok(data);
         }
+
+        [HttpDelete("devices/{id}")]
+        [RequiresPermission("perangkat_iot.delete")]
+        public async Task<IActionResult> DeleteDevice(string id)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var success = await _repo.DeleteDeviceAsync(id, username);
+            if (!success) return NotFound(new { message = "Device tidak ditemukan atau gagal dihapus." });
+
+            return Ok(new { message = "Device berhasil dihapus." });
+        }
+        // ── User Management ──────────────────────────────────────────────────
+
+        [HttpGet("users")]
+        [RequiresPermission("iot.view")]
+        public async Task<IActionResult> GetAllUsers(
+            [FromQuery] string? keyword,
+            [FromQuery] string? roleId,
+            [FromQuery] string? status)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var list = await _repo.GetAllUsersAsync(keyword, roleId, status);
+            return Ok(list);
+        }
+
+        [HttpGet("users/{targetUsername}")]
+        [RequiresPermission("iot.view")]
+        public async Task<IActionResult> GetUserDetail(string targetUsername)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var user = await _repo.GetUserDetailAsync(targetUsername, username);
+            if (user == null) return NotFound(new { message = "Pengguna tidak ditemukan." });
+
+            return Ok(user);
+        }
+
+        [HttpPatch("users/{targetUsername}/status")]
+        [RequiresPermission("iot.view")]
+        public async Task<IActionResult> SetUserStatus(string targetUsername, [FromBody] string status)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            if (status != "Aktif" && status != "Tidak Aktif")
+                return BadRequest(new { message = "Status harus 'Aktif' atau 'Tidak Aktif'." });
+
+            var success = await _repo.SetUserStatusAsync(targetUsername, status, username);
+            if (!success) return NotFound(new { message = "Pengguna tidak ditemukan." });
+
+            return Ok(new { message = $"Status pengguna berhasil diubah menjadi {status}." });
+        }
+
+        [HttpPost("users")]
+        [RequiresPermission("iot.view")]
+        public async Task<IActionResult> CreateUser([FromBody] SaveUserRequest request)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.RoleId))
+                return BadRequest(new { message = "Username dan Role wajib diisi." });
+
+            var success = await _repo.CreateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username);
+            if (!success) return BadRequest(new { message = "Gagal menambahkan pengguna baru. Kemungkinan username sudah terdaftar." });
+
+            return Ok(new { message = "Pengguna baru berhasil ditambahkan." });
+        }
+
+        [HttpPut("users")]
+        [RequiresPermission("iot.view")]
+        public async Task<IActionResult> UpdateUser([FromBody] SaveUserRequest request)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.RoleId))
+                return BadRequest(new { message = "Username dan Role wajib diisi." });
+
+            var success = await _repo.UpdateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username);
+            if (!success) return BadRequest(new { message = "Gagal memperbarui data pengguna." });
+
+            return Ok(new { message = "Data pengguna berhasil diperbarui." });
+        }
+
+        [HttpDelete("users/{targetUsername}")]
+        [RequiresPermission("iot.view")]
+        public async Task<IActionResult> DeleteUser(string targetUsername)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var success = await _repo.DeleteUserAsync(targetUsername);
+            if (!success) return NotFound(new { message = "Pengguna tidak ditemukan atau gagal dicabut hak aksesnya." });
+
+            return Ok(new { message = "Hak akses pengguna berhasil dicabut." });
+        }
+
+        // ─── Report Summary ───────────────────────────────────────────────────
+        [HttpGet("report")]
+        public async Task<IActionResult> GetReportSummary([FromQuery] string period = "today")
+        {
+            var validPeriods = new[] { "today", "week", "month" };
+            if (!validPeriods.Contains(period.ToLower()))
+                return BadRequest(new { message = "Period tidak valid. Gunakan: today, week, month." });
+
+            var result = await _repo.GetReportSummaryAsync(period.ToLower());
+            return Ok(result);
+        }
+    }
+
+    public class SaveUserRequest
+    {
+        public string Username { get; set; } = "";
+        public string RoleId { get; set; } = "";
+        public string? Status { get; set; }
     }
 }

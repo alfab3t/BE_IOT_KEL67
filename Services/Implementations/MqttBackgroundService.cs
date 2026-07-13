@@ -225,66 +225,130 @@ namespace astratech_apps_backend.Services.Implementations
                     return;
                 }
 
-                // Logika lama (Static mapping) untuk kompatibilitas ke belakang
+                // Logika parser payload format: MAC;VALUE (misal: B8:F8:62:62:1E:84;28.7) atau angka murni
+                string processedPayload = payload;
+                string? parsedMac = null;
+
+                if (payload.Contains(';'))
+                {
+                    string[] split = payload.Split(';');
+                    if (split.Length == 2)
+                    {
+                        parsedMac = split[0].Trim();
+                        processedPayload = split[1].Trim();
+                    }
+                }
+
                 double valueOld = 0.0;
-                bool isNumeric = double.TryParse(payload, out valueOld);
+                bool isNumeric = double.TryParse(processedPayload, out valueOld);
 
                 if ("valTemp0011".Equals(topic) || "valTempS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        string targetId = "valTempS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
-                        await SaveTelemetryToDatabaseAsync(targetId, valueOld, "Temperature");
+                        if (!string.IsNullOrEmpty(parsedMac))
+                        {
+                            await SaveTelemetryByMacAsync(parsedMac, valueOld, "Temperature");
+                        }
+                        else
+                        {
+                            string targetId = "valTempS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                            await SaveTelemetryToDatabaseAsync(targetId, valueOld, "Temperature");
+                        }
                     }
                 }
                 else if ("valHumi00112".Equals(topic) || "valHumiS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        string targetId = "valHumiS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
-                        await SaveTelemetryToDatabaseAsync(targetId, valueOld, "Humidity");
+                        if (!string.IsNullOrEmpty(parsedMac))
+                        {
+                            await SaveTelemetryByMacAsync(parsedMac, valueOld, "Humidity");
+                        }
+                        else
+                        {
+                            string targetId = "valHumiS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                            await SaveTelemetryToDatabaseAsync(targetId, valueOld, "Humidity");
+                        }
                     }
                 }
                 else if ("setPower00121".Equals(topic) || "setPowerS3".Equals(topic))
                 {
                     string status = "OFF";
-                    if (payload == "1" || payload.Equals("ON", StringComparison.OrdinalIgnoreCase) || payload == "1.0")
+                    if (processedPayload == "1" || processedPayload.Equals("ON", StringComparison.OrdinalIgnoreCase) || processedPayload == "1.0")
                     {
                         status = "ON";
                     }
-                    string targetId = "setPowerS3".Equals(topic) ? "DEV_AC01" : "DEV_LAMP01";
-                    await UpdateDeviceStatusAsync(targetId, status);
+
+                    if (!string.IsNullOrEmpty(parsedMac))
+                    {
+                        await UpdateDeviceStatusByMacAsync(parsedMac, status);
+                    }
+                    else
+                    {
+                        string targetId = "setPowerS3".Equals(topic) ? "DEV_AC01" : "DEV_LAMP01";
+                        await UpdateDeviceStatusAsync(targetId, status);
+                    }
                 }
                 else if ("setTemp00122".Equals(topic) || "setTempS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        string targetId = "setTempS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
-                        await UpdateDeviceLimitMinAsync(targetId, valueOld);
+                        if (!string.IsNullOrEmpty(parsedMac))
+                        {
+                            // Update limit min based on MAC
+                            await UpdateDeviceLimitMinByMacAsync(parsedMac, valueOld);
+                        }
+                        else
+                        {
+                            string targetId = "setTempS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                            await UpdateDeviceLimitMinAsync(targetId, valueOld);
+                        }
                     }
                 }
                 else if ("setMode00124".Equals(topic) || "setModeS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        string targetId = "setModeS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
-                        await SaveTelemetryToDatabaseAsync(targetId, valueOld, "Mode");
+                        if (!string.IsNullOrEmpty(parsedMac))
+                        {
+                            await SaveTelemetryByMacAsync(parsedMac, valueOld, "Mode");
+                        }
+                        else
+                        {
+                            string targetId = "setModeS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                            await SaveTelemetryToDatabaseAsync(targetId, valueOld, "Mode");
+                        }
                     }
                 }
                 else if ("setFan00123".Equals(topic) || "setFanS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        string targetId = "setFanS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
-                        await SaveTelemetryToDatabaseAsync(targetId, valueOld, "FanSpeed");
+                        if (!string.IsNullOrEmpty(parsedMac))
+                        {
+                            await SaveTelemetryByMacAsync(parsedMac, valueOld, "FanSpeed");
+                        }
+                        else
+                        {
+                            string targetId = "setFanS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                            await SaveTelemetryToDatabaseAsync(targetId, valueOld, "FanSpeed");
+                        }
                     }
                 }
                 else if ("setSwing00125".Equals(topic) || "setSwingS3".Equals(topic))
                 {
                     if (isNumeric)
                     {
-                        string targetId = "setSwingS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
-                        await SaveTelemetryToDatabaseAsync(targetId, valueOld, "SwingDirection");
+                        if (!string.IsNullOrEmpty(parsedMac))
+                        {
+                            await SaveTelemetryByMacAsync(parsedMac, valueOld, "SwingDirection");
+                        }
+                        else
+                        {
+                            string targetId = "setSwingS3".Equals(topic) ? "DEV_TEMP02" : "DEV_TEMP01";
+                            await SaveTelemetryToDatabaseAsync(targetId, valueOld, "SwingDirection");
+                        }
                     }
                 }
             }
@@ -306,8 +370,9 @@ namespace astratech_apps_backend.Services.Implementations
             {
                 await using var conn = new SqlConnection(_connSia);
                 var deviceId = await conn.QueryFirstOrDefaultAsync<string>(
-                    "SELECT dev_id FROM dbo.IOT_MST_Device WHERE dev_mac_address = @Mac", 
-                    new { Mac = mac });
+                    "IOT_SP_Device_GetIdByMac",
+                    new { Mac = mac },
+                    commandType: CommandType.StoredProcedure);
 
                 if (!string.IsNullOrEmpty(deviceId))
                 {
@@ -337,8 +402,9 @@ namespace astratech_apps_backend.Services.Implementations
             {
                 await using var conn = new SqlConnection(_connSia);
                 var deviceId = await conn.QueryFirstOrDefaultAsync<string>(
-                    "SELECT dev_id FROM dbo.IOT_MST_Device WHERE dev_mac_address = @Mac", 
-                    new { Mac = mac });
+                    "IOT_SP_Device_GetIdByMac",
+                    new { Mac = mac },
+                    commandType: CommandType.StoredProcedure);
 
                 if (!string.IsNullOrEmpty(deviceId))
                 {
@@ -407,13 +473,36 @@ namespace astratech_apps_backend.Services.Implementations
             try
             {
                 await using var conn = new SqlConnection(_connSia);
-                var sql = "UPDATE dbo.IOT_MST_Device SET dev_limit_min = @LimitMin, dev_updated_by = 'MQTT_Daemon', dev_updated_date = GETDATE() WHERE dev_id = @DeviceId";
-                await conn.ExecuteAsync(sql, new { LimitMin = limitMin, DeviceId = deviceId });
+                await conn.ExecuteAsync(
+                    "IOT_SP_Device_UpdateLimitMin",
+                    new { DeviceId = deviceId, LimitMin = limitMin },
+                    commandType: CommandType.StoredProcedure);
                 _logger.LogInformation("SUKSES: Batas minimum (limit_min) device [{DeviceId}] diubah menjadi {LimitMin}.", deviceId, limitMin);
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Gagal memperbarui batas minimum device [{DeviceId}]", deviceId);
+            }
+        }
+
+        private async Task UpdateDeviceLimitMinByMacAsync(string mac, double limitMin)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_connSia);
+                var resolvedId = await conn.QueryFirstOrDefaultAsync<string>(
+                    "IOT_SP_Device_UpdateLimitMinByMac",
+                    new { Mac = mac, LimitMin = limitMin },
+                    commandType: CommandType.StoredProcedure);
+
+                if (!string.IsNullOrEmpty(resolvedId))
+                    _logger.LogInformation("SUKSES: Batas minimum (limit_min) device [{DeviceId}] ({Mac}) diubah menjadi {LimitMin}.", resolvedId, mac, limitMin);
+                else
+                    _logger.LogWarning("Gagal mengubah limit_min: MAC [{Mac}] tidak terdaftar di database.", mac);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal memperbarui batas minimum device untuk MAC [{Mac}] ke {LimitMin}", mac, limitMin);
             }
         }
 
