@@ -772,5 +772,48 @@ namespace astratech_apps_backend.Repositories.Implementations
                 return new ReportSummary { Period = period };
             }
         }
+
+        // ── AC Settings ───────────────────────────────────────────────────────────
+
+        public async Task<AcSettings?> GetAcSettingsAsync(string deviceId)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var parameters = new DynamicParameters();
+                parameters.Add("@dev_id", deviceId);
+                var result = await conn.QueryFirstOrDefaultAsync<AcSettings>(
+                    "IOT_SP_AC_Settings_Get", parameters, commandType: CommandType.StoredProcedure);
+                return result;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mengambil AC settings untuk device: {DeviceId}", deviceId);
+                return null;
+            }
+        }
+
+        public async Task<bool> SaveAcSettingsAsync(string deviceId, AcSettings settings, string username)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                var parameters = new DynamicParameters();
+                parameters.Add("@dev_id",       deviceId);
+                parameters.Add("@Temperature",  settings.Temperature);
+                parameters.Add("@Mode",         settings.Mode);
+                parameters.Add("@FanSpeed",     settings.FanSpeed);
+                parameters.Add("@SwingMode",    settings.SwingMode);
+                parameters.Add("@UpdatedBy",    username);
+                var result = await conn.ExecuteScalarAsync<int>(
+                    "IOT_SP_AC_Settings_Save", parameters, commandType: CommandType.StoredProcedure);
+                return result == 1;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal menyimpan AC settings untuk device: {DeviceId}", deviceId);
+                return false;
+            }
+        }
     }
 }

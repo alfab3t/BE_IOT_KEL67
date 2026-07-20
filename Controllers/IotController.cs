@@ -511,6 +511,44 @@ namespace astratech_apps_backend.Controllers
             var result = await _repo.GetReportSummaryAsync(period.ToLower());
             return Ok(result);
         }
+
+        // ── AC Settings ───────────────────────────────────────────────────────────
+
+        [HttpGet("devices/{deviceId}/ac-settings")]
+        [RequiresPermission("dashboard_iot.view")]
+        public async Task<IActionResult> GetAcSettings(string deviceId)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var settings = await _repo.GetAcSettingsAsync(deviceId);
+            if (settings == null)
+            {
+                // Return defaults if no record exists yet
+                return Ok(new { temperature = 22, mode = "Cool", fanSpeed = "Auto", swingMode = "Auto" });
+            }
+            return Ok(settings);
+        }
+
+        [HttpPost("devices/{deviceId}/ac-settings")]
+        [RequiresPermission("dashboard_iot.view")]
+        public async Task<IActionResult> SaveAcSettings(string deviceId, [FromBody] SaveAcSettingsRequest dto)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            var settings = new astratech_apps_backend.DTOs.Iot.AcSettings
+            {
+                Temperature = dto.Temperature,
+                Mode        = dto.Mode,
+                FanSpeed    = dto.FanSpeed,
+                SwingMode   = dto.SwingMode,
+            };
+
+            var success = await _repo.SaveAcSettingsAsync(deviceId, settings, username);
+            if (!success) return BadRequest(new { message = "Gagal menyimpan pengaturan AC." });
+            return Ok(new { message = "Pengaturan AC berhasil disimpan." });
+        }
     }
 
     public class SaveUserRequest
@@ -518,5 +556,13 @@ namespace astratech_apps_backend.Controllers
         public string Username { get; set; } = "";
         public string RoleId { get; set; } = "";
         public string? Status { get; set; }
+    }
+
+    public class SaveAcSettingsRequest
+    {
+        public int Temperature { get; set; } = 22;
+        public string Mode { get; set; } = "Cool";
+        public string FanSpeed { get; set; } = "Auto";
+        public string SwingMode { get; set; } = "Auto";
     }
 }
