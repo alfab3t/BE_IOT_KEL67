@@ -4,11 +4,8 @@ namespace astratech_apps_backend.DTOs.Iot.Request
 {
     public record CreateDeviceRequest
     {
-        [Required(ErrorMessage = "ID Device wajib diisi.")]
-        public string Id { get; init; } = string.Empty;
-
-        [Required(ErrorMessage = "MAC Address wajib diisi.")]
-        public string MacAddress { get; init; } = string.Empty;
+        public string? Id { get; init; }
+        public string? MacAddress { get; init; }
 
         [Required(ErrorMessage = "Nama Device wajib diisi.")]
         public string Name { get; init; } = string.Empty;

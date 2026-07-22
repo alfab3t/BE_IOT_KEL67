@@ -31,7 +31,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                 parameters.Add("@CreatedBy", username);
 
                 var result = await conn.ExecuteScalarAsync<string>("IOT_SP_Device_Create", parameters, commandType: CommandType.StoredProcedure);
-                return result ?? dto.Id;
+                return result ?? dto.Id ?? string.Empty;
             }
             catch (Exception ex)
             {
@@ -54,7 +54,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                 parameters.Add("@dev_photo", dto.Photo);
                 parameters.Add("@UpdatedBy", username);
 
-                var rows = await conn.ExecuteAsync("IOT_SP_Device_Update", parameters, commandType: CommandType.StoredProcedure);
+                var rows = await conn.ExecuteScalarAsync<int>("IOT_SP_Device_Update", parameters, commandType: CommandType.StoredProcedure);
                 return rows > 0;
             }
             catch (Exception ex)
@@ -95,6 +95,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                         LimitMin = (decimal?)row.dev_limit_min,
                         LimitMax = (decimal?)row.dev_limit_max,
                         Photo = (string)row.dev_photo,
+                        LocationId = (int?)row.loc_id,
                         Gedung = (string)row.loc_gedung,
                         Lantai = (string)row.loc_lantai,
                         Ruangan = (string)row.loc_ruangan,
@@ -192,7 +193,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                     loc_id = locationId,
                     UpdatedBy = username
                 };
-                var rows = await conn.ExecuteAsync("IOT_SP_Device_UpdateLocation", parameters, commandType: CommandType.StoredProcedure);
+                var rows = await conn.ExecuteScalarAsync<int>("IOT_SP_Device_UpdateLocation", parameters, commandType: CommandType.StoredProcedure);
                 return rows > 0;
             }
             catch (Exception ex)
