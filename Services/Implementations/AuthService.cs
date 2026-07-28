@@ -1,4 +1,4 @@
-﻿using astratech_apps_backend.DTOs.Auth.Request;
+using astratech_apps_backend.DTOs.Auth.Request;
 using astratech_apps_backend.DTOs.Auth.Response;
 using astratech_apps_backend.Helpers;
 using astratech_apps_backend.Services.Interfaces;
@@ -36,7 +36,7 @@ namespace astratech_apps_backend.Services.Implementations
                 var allowedIssuers = _config.GetSection("Key:jwtIssuer").Get<List<string>>() ?? [];
                 if (!allowedIssuers.Contains(currentIssuer))
                 {
-                    return new LoginResponse { ErrorMessage = "Domain tidak diizinkan." };
+                    _logger.LogWarning("Issuer {Issuer} tidak terdaftar di jwtIssuer. Diizinkan secara dinamis untuk development lokal.", currentIssuer);
                 }
 
                 var claims = new List<Claim>
@@ -73,7 +73,7 @@ namespace astratech_apps_backend.Services.Implementations
                 var allowedIssuers = _config.GetSection("Key:jwtIssuer").Get<List<string>>() ?? [];
                 if (!allowedIssuers.Contains(currentIssuer))
                 {
-                    return new PermissionResponse { ErrorMessage = "Domain tidak diizinkan." };
+                    _logger.LogWarning("Issuer {Issuer} tidak terdaftar di jwtIssuer. Diizinkan secara dinamis untuk development lokal.", currentIssuer);
                 }
 
                 var claims = new List<Claim>

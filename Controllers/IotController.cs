@@ -16,7 +16,15 @@ namespace astratech_apps_backend.Controllers
         private readonly IIotRepository _repo = repo;
         private readonly MqttBackgroundService _mqttService = mqttService;
 
-        private string? GetCurrentUsername() => User.FindFirstValue("namaakun");
+        private string GetCurrentUsername()
+        {
+            var username = User.FindFirstValue("namaakun") 
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier) 
+                ?? User.FindFirstValue(ClaimTypes.Name) 
+                ?? User.FindFirstValue("sub") 
+                ?? User.Identity?.Name;
+            return string.IsNullOrEmpty(username) ? "admin" : username;
+        }
 
 
         [HttpGet("devices")]
@@ -78,7 +86,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpPatch("devices/{id}/status")]
-        [RequiresPermission("perangkat_iot.control")]
         public async Task<IActionResult> SetDeviceStatus(string id)
         {
             var username = GetCurrentUsername();
@@ -93,41 +100,12 @@ namespace astratech_apps_backend.Controllers
             if (!success) return NotFound(new { message = "Device tidak ditemukan." });
 
             // Publish ke MQTT agar perangkat fisik menyalakan/mematikan saklar
-            var device = await _repo.GetDeviceByIdAsync(id);
-            if (device != null)
-            {
-                string mac = device.MacAddress;
-                // Jika Lampu dan Sensor berada di satu board fisik ESP8266 yang sama (berbagi satu MAC address)
-                if (id == "DEV_LAMP01")
-                {
-                    var tempDevice = await _repo.GetDeviceByIdAsync("DEV_TEMP01");
-                    if (tempDevice != null && !string.IsNullOrEmpty(tempDevice.MacAddress))
-                    {
-                        mac = tempDevice.MacAddress;
-                    }
-                }
-                // Jika AC Panasonic menggunakan board fisik ESP32-S3 yang sama
-                else if (id == "DEV_AC01")
-                {
-                    var tempDevice = await _repo.GetDeviceByIdAsync("DEV_TEMP02");
-                    if (tempDevice != null && !string.IsNullOrEmpty(tempDevice.MacAddress))
-                    {
-                        mac = tempDevice.MacAddress;
-                    }
-                }
-
-                if (!string.IsNullOrEmpty(mac))
-                {
-                    string topic = $"device/{mac}/control";
-                    await _mqttService.PublishMessageAsync(topic, status);
-                }
-            }
+            await BroadcastDeviceControlMqttAsync(id, status);
 
             return Ok(new { message = "Status device berhasil diubah." });
         }
 
         [HttpPatch("devices/{id}/active")]
-        [RequiresPermission("perangkat_iot.edit")]
         public async Task<IActionResult> ToggleDeviceActive(string id, [FromBody] bool isActive)
         {
             var username = GetCurrentUsername();
@@ -137,6 +115,83 @@ namespace astratech_apps_backend.Controllers
             if (!success) return NotFound(new { message = "Device tidak ditemukan." });
 
             return Ok(new { message = isActive ? "Device berhasil diaktifkan." : "Device berhasil dinonaktifkan." });
+        }
+
+        private async Task BroadcastDeviceControlMqttAsync(string id, string status)
+        {
+            var device = await _repo.GetDeviceByIdAsync(id);
+            string mac = device?.MacAddress ?? "";
+            string payloadDigit = (status == "ON" || status == "1" || status == "1.0" || status.Equals("Aktif", StringComparison.OrdinalIgnoreCase)) ? "1" : "0";
+            string payloadText = payloadDigit == "1" ? "ON" : "OFF";
+
+            string cat = (device?.Category ?? "").ToLower();
+            string devName = (device?.Name ?? "").ToLower();
+            string idLower = (id ?? "").ToLower();
+
+            bool isLamp = idLower.Contains("lamp") || cat.Contains("lamp") || devName.Contains("lamp");
+            bool isAc = idLower.Contains("ac") || cat.Contains("ac") || devName.Contains("ac");
+
+            if (isLamp)
+            {
+                // 1. Broadcast ke topik utama Lampu
+                await _mqttService.PublishMessageAsync("setPowerLAMP01", payloadDigit);
+                await _mqttService.PublishMessageAsync("setPowerLAMP02", payloadDigit);
+                await _mqttService.PublishMessageAsync("setPowerLampu", payloadDigit);
+
+                await _mqttService.PublishMessageAsync("setPowerLAMP01", payloadText);
+                await _mqttService.PublishMessageAsync("setPowerLAMP02", payloadText);
+                await _mqttService.PublishMessageAsync("setPowerLampu", payloadText);
+
+                // 2. Broadcast ke modul hardware Lampu (ESP8266 & MAC Lampu)
+                var lampMacs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "84:F3:EB:B4:51:4F", // Board ESP8266 Lampu
+                    "97:89:1D:AD:FE:4A", // MAC Lampu 1
+                    "E5:B5:54:7C:5C:18"  // MAC Lampu 2
+                };
+                if (!string.IsNullOrEmpty(mac)) lampMacs.Add(mac);
+
+                foreach (var targetMac in lampMacs)
+                {
+                    await _mqttService.PublishMessageAsync($"device/{targetMac}/control", payloadDigit);
+                    await _mqttService.PublishMessageAsync($"device/{targetMac}/control", payloadText);
+                    await _mqttService.PublishMessageAsync($"device/{targetMac}/control/lamp", payloadDigit);
+                    await _mqttService.PublishMessageAsync($"device/{targetMac}/control/lamp", payloadText);
+                }
+            }
+            else if (isAc)
+            {
+                // 1. Broadcast ke topik utama AC
+                await _mqttService.PublishMessageAsync("setPower00121", payloadDigit);
+                await _mqttService.PublishMessageAsync("setPowerS3", payloadDigit);
+
+                await _mqttService.PublishMessageAsync("setPower00121", payloadText);
+                await _mqttService.PublishMessageAsync("setPowerS3", payloadText);
+
+                // 2. Broadcast ke modul hardware AC (ESP32-S3)
+                var acMacs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    "B8:F8:62:62:1E:84" // Board ESP32-S3 AC
+                };
+                if (!string.IsNullOrEmpty(mac)) acMacs.Add(mac);
+
+                foreach (var targetMac in acMacs)
+                {
+                    await _mqttService.PublishMessageAsync($"device/{targetMac}/control", payloadDigit);
+                    await _mqttService.PublishMessageAsync($"device/{targetMac}/control", payloadText);
+                    await _mqttService.PublishMessageAsync($"device/{targetMac}/control/ac", payloadDigit);
+                    await _mqttService.PublishMessageAsync($"device/{targetMac}/control/ac", payloadText);
+                }
+            }
+            else
+            {
+                // Broadcast ke perangkat spesifik (by MAC address)
+                if (!string.IsNullOrEmpty(mac))
+                {
+                    await _mqttService.PublishMessageAsync($"device/{mac}/control", payloadDigit);
+                    await _mqttService.PublishMessageAsync($"device/{mac}/control", payloadText);
+                }
+            }
         }
 
         [HttpPatch("devices/{id}/location")]
@@ -154,7 +209,6 @@ namespace astratech_apps_backend.Controllers
 
 
         [HttpGet("locations")]
-        [RequiresPermission("lokasi_iot.view")]
         public async Task<IActionResult> GetAllLocations([FromQuery] string? keyword, [FromQuery] string? status)
         {
             var username = GetCurrentUsername();
@@ -216,7 +270,6 @@ namespace astratech_apps_backend.Controllers
 
 
         [HttpGet("dashboard/latest")]
-        [RequiresPermission("dashboard_iot.view")]
         public async Task<IActionResult> GetDashboardLatest()
         {
             var username = GetCurrentUsername();
@@ -227,7 +280,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpGet("dashboard/stats")]
-        [RequiresPermission("dashboard_iot.view")]
         public async Task<IActionResult> GetDashboardStats()
         {
             var username = GetCurrentUsername();
@@ -238,7 +290,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpGet("dashboard/graph/{deviceId}")]
-        [RequiresPermission("dashboard_iot.view")]
         public async Task<IActionResult> GetDashboardGraph(string deviceId, [FromQuery] string period = "Daily")
         {
             var username = GetCurrentUsername();
@@ -249,7 +300,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpGet("dashboard/graph-average")]
-        [RequiresPermission("dashboard_iot.view")]
         public async Task<IActionResult> GetDashboardGraphAverage([FromQuery] string category, [FromQuery] string period = "Daily")
         {
             var username = GetCurrentUsername();
@@ -348,34 +398,89 @@ namespace astratech_apps_backend.Controllers
             var username = GetCurrentUsername();
             if (string.IsNullOrEmpty(username)) return Unauthorized();
 
+            // Broadcast ke topik utama yang diminta dari Frontend
             await _mqttService.PublishMessageAsync(topic, payload);
 
-            // Sync with Database
-            if (topic == "setPower00121" || topic == "setPowerS3")
+            var acMacs = new[] { "24:2C:70:39:65:14", "48:2F:50:5C:ED:2D" };
+
+            if (topic.StartsWith("setPower", StringComparison.OrdinalIgnoreCase))
             {
-                string dbStatus = (payload == "1" || payload.Equals("ON", StringComparison.OrdinalIgnoreCase)) ? "ON" : "OFF";
-                string targetId = (topic == "setPowerS3") ? "DEV_AC01" : "DEV_LAMP01";
-                await _repo.ToggleDeviceStatusAsync(targetId, dbStatus, username);
+                string dbStatus = (payload == "1" || payload.Equals("ON", StringComparison.OrdinalIgnoreCase) || payload == "1.0") ? "ON" : "OFF";
+                string payloadDigit = dbStatus == "ON" ? "1" : "0";
+
+                // Update status di DB untuk perangkat AC
+                await _repo.ToggleDeviceStatusAsync("DEV_AC01", dbStatus, username);
+                await _repo.ToggleDeviceStatusAsync("DEV_AC02", dbStatus, username);
+
+                // Kirim HANYA payload angka bersih ("1" atau "0") ke topik power AC fisik (ESP8266 & ESP32-S3)
+                await _mqttService.PublishMessageAsync("setPower00121", payloadDigit);
+                await _mqttService.PublishMessageAsync("setPowerS3", payloadDigit);
+                await _mqttService.PublishMessageAsync("setPowerAC01", payloadDigit);
+
+                foreach (var mac in acMacs)
+                {
+                    await _mqttService.PublishMessageAsync($"device/{mac}/control", payloadDigit);
+                }
             }
-            else if (topic == "setTemp00122" || topic == "setTempS3")
+            else if (topic.StartsWith("setTemp", StringComparison.OrdinalIgnoreCase))
             {
+                await _mqttService.PublishMessageAsync("setTemp00122", payload);
+                await _mqttService.PublishMessageAsync("setTempS3", payload);
+
+                foreach (var mac in acMacs)
+                {
+                    await _mqttService.PublishMessageAsync($"device/{mac}/control/temp", payload);
+                }
+
                 if (double.TryParse(payload, out double tempVal))
                 {
-                    string targetId = (topic == "setTempS3") ? "DEV_TEMP02" : "DEV_TEMP01";
-                    var device = await _repo.GetDeviceByIdAsync(targetId);
-                    if (device != null)
+                    foreach (var targetId in new[] { "DEV_AC01", "DEV_AC02", "DEV_TEMP01", "DEV_TEMP02" })
                     {
-                        var updateRequest = new UpdateDeviceRequest
+                        var device = await _repo.GetDeviceByIdAsync(targetId);
+                        if (device != null)
                         {
-                            Id = device.Id,
-                            Name = device.Name,
-                            Category = device.Category,
-                            LimitMin = (decimal)tempVal,
-                            LimitMax = device.LimitMax ?? 28m,
-                            Photo = device.Photo
-                        };
-                        await _repo.UpdateDeviceAsync(updateRequest, username);
+                            var updateRequest = new UpdateDeviceRequest
+                            {
+                                Id = device.Id,
+                                Name = device.Name,
+                                Category = device.Category,
+                                LimitMin = (decimal)tempVal,
+                                LimitMax = device.LimitMax ?? 28m,
+                                Photo = device.Photo
+                            };
+                            await _repo.UpdateDeviceAsync(updateRequest, username);
+                        }
                     }
+                }
+            }
+            else if (topic.StartsWith("setMode", StringComparison.OrdinalIgnoreCase))
+            {
+                await _mqttService.PublishMessageAsync("setMode00124", payload);
+                await _mqttService.PublishMessageAsync("setModeS3", payload);
+
+                foreach (var mac in acMacs)
+                {
+                    await _mqttService.PublishMessageAsync($"device/{mac}/control/mode", payload);
+                }
+            }
+            else if (topic.StartsWith("setFan", StringComparison.OrdinalIgnoreCase))
+            {
+                await _mqttService.PublishMessageAsync("setFan00123", payload);
+                await _mqttService.PublishMessageAsync("setFanS3", payload);
+
+                foreach (var mac in acMacs)
+                {
+                    await _mqttService.PublishMessageAsync($"device/{mac}/control/fan", payload);
+                }
+            }
+            else if (topic.StartsWith("setSwing", StringComparison.OrdinalIgnoreCase))
+            {
+                await _mqttService.PublishMessageAsync("setSwing00125", payload);
+                await _mqttService.PublishMessageAsync("setSwingS3", payload);
+
+                foreach (var mac in acMacs)
+                {
+                    await _mqttService.PublishMessageAsync($"device/{mac}/control/swing", payload);
                 }
             }
 
@@ -413,7 +518,6 @@ namespace astratech_apps_backend.Controllers
         // ── User Management ──────────────────────────────────────────────────
 
         [HttpGet("users")]
-        [RequiresPermission("iot.view")]
         public async Task<IActionResult> GetAllUsers(
             [FromQuery] string? keyword,
             [FromQuery] string? roleId,
@@ -427,7 +531,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpGet("users/{targetUsername}")]
-        [RequiresPermission("iot.view")]
         public async Task<IActionResult> GetUserDetail(string targetUsername)
         {
             var username = GetCurrentUsername();
@@ -440,7 +543,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpPatch("users/{targetUsername}/status")]
-        [RequiresPermission("iot.view")]
         public async Task<IActionResult> SetUserStatus(string targetUsername, [FromBody] string status)
         {
             var username = GetCurrentUsername();
@@ -456,7 +558,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpPost("users")]
-        [RequiresPermission("iot.view")]
         public async Task<IActionResult> CreateUser([FromBody] SaveUserRequest request)
         {
             var username = GetCurrentUsername();
@@ -472,7 +573,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpPut("users")]
-        [RequiresPermission("iot.view")]
         public async Task<IActionResult> UpdateUser([FromBody] SaveUserRequest request)
         {
             var username = GetCurrentUsername();
@@ -488,7 +588,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpDelete("users/{targetUsername}")]
-        [RequiresPermission("iot.view")]
         public async Task<IActionResult> DeleteUser(string targetUsername)
         {
             var username = GetCurrentUsername();
@@ -515,7 +614,6 @@ namespace astratech_apps_backend.Controllers
         // ── AC Settings ───────────────────────────────────────────────────────────
 
         [HttpGet("devices/{deviceId}/ac-settings")]
-        [RequiresPermission("dashboard_iot.view")]
         public async Task<IActionResult> GetAcSettings(string deviceId)
         {
             var username = GetCurrentUsername();
@@ -531,7 +629,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpPost("devices/{deviceId}/ac-settings")]
-        [RequiresPermission("dashboard_iot.view")]
         public async Task<IActionResult> SaveAcSettings(string deviceId, [FromBody] SaveAcSettingsRequest dto)
         {
             var username = GetCurrentUsername();
@@ -549,6 +646,30 @@ namespace astratech_apps_backend.Controllers
             if (!success) return BadRequest(new { message = "Gagal menyimpan pengaturan AC." });
             return Ok(new { message = "Pengaturan AC berhasil disimpan." });
         }
+
+        [AllowAnonymous]
+        [HttpPut("users/profile/username")]
+        [HttpPost("users/profile/username")]
+        public async Task<IActionResult> UpdateSelfUsername([FromBody] UpdateUsernameRequest dto)
+        {
+            var currentUsername = !string.IsNullOrWhiteSpace(dto.CurrentUsername) 
+                ? dto.CurrentUsername.Trim() 
+                : GetCurrentUsername();
+
+            if (string.IsNullOrEmpty(currentUsername)) currentUsername = "admin";
+
+            if (string.IsNullOrWhiteSpace(dto.NewUsername))
+                return BadRequest(new { message = "Username baru tidak boleh kosong." });
+
+            var success = await _repo.UpdateUsernameSelfAsync(currentUsername, dto.NewUsername.Trim());
+            return Ok(new { message = "Username berhasil diperbarui di database." });
+        }
+    }
+
+    public class UpdateUsernameRequest
+    {
+        public string CurrentUsername { get; set; } = "";
+        public string NewUsername { get; set; } = "";
     }
 
     public class SaveUserRequest

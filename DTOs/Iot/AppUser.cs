@@ -5,6 +5,9 @@ namespace astratech_apps_backend.DTOs.Iot
         public string Username { get; set; } = string.Empty;
         public string FullName  { get; set; } = string.Empty;
         public string Email     { get; set; } = string.Empty;
+        public string Phone     { get; set; } = string.Empty;
+        public string RegisteredSince { get; set; } = string.Empty;
+        public string LastLogin { get; set; } = string.Empty;
         public string Status    { get; set; } = string.Empty;
         public string RoleName  { get; set; } = string.Empty;
         public string RoleId    { get; set; } = string.Empty;

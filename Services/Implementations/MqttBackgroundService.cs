@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using astratech_apps_backend.Helpers;
@@ -165,7 +166,7 @@ namespace astratech_apps_backend.Services.Implementations
                 if ("esp32/water".Equals(topic, StringComparison.OrdinalIgnoreCase))
                 {
                     double val = 0.0;
-                    if (double.TryParse(payload, out val))
+                    if (double.TryParse(payload, NumberStyles.Any, CultureInfo.InvariantCulture, out val))
                     {
                         await SaveTelemetryToDatabaseAsync("DEV_WAT01", val, "WaterFlow");
                     }
@@ -240,7 +241,7 @@ namespace astratech_apps_backend.Services.Implementations
                 }
 
                 double valueOld = 0.0;
-                bool isNumeric = double.TryParse(processedPayload, out valueOld);
+                bool isNumeric = double.TryParse(processedPayload, NumberStyles.Any, CultureInfo.InvariantCulture, out valueOld);
 
                 if ("valTemp0011".Equals(topic) || "valTempS3".Equals(topic))
                 {
@@ -272,7 +273,7 @@ namespace astratech_apps_backend.Services.Implementations
                         }
                     }
                 }
-                else if ("setPower00121".Equals(topic) || "setPowerS3".Equals(topic))
+                else if ("setPower00121".Equals(topic) || "setPowerS3".Equals(topic) || "setPowerAC01".Equals(topic))
                 {
                     string status = "OFF";
                     if (processedPayload == "1" || processedPayload.Equals("ON", StringComparison.OrdinalIgnoreCase) || processedPayload == "1.0")
@@ -286,7 +287,7 @@ namespace astratech_apps_backend.Services.Implementations
                     }
                     else
                     {
-                        string targetId = "setPowerS3".Equals(topic) ? "DEV_AC01" : "DEV_LAMP01";
+                        string targetId = "DEV_AC01";
                         await UpdateDeviceStatusAsync(targetId, status);
                     }
                 }
@@ -369,21 +370,30 @@ namespace astratech_apps_backend.Services.Implementations
             try
             {
                 await using var conn = new SqlConnection(_connSia);
-                var deviceId = await conn.QueryFirstOrDefaultAsync<string>(
-                    "IOT_SP_Device_GetIdByMac",
-                    new { Mac = mac },
-                    commandType: CommandType.StoredProcedure);
+                var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                    "SELECT dev_id, rua_id FROM MST_Device WHERE dev_mac_address = @mac AND dev_is_deleted = 0",
+                    new { mac });
 
-                if (!string.IsNullOrEmpty(deviceId))
+                if (device != null)
                 {
+                    int devId = (int)device.dev_id;
+                    int ruaId = (int)device.rua_id;
+                    string unit = type.Contains("Temp") ? "°C" : (type.Contains("Humi") ? "%" : (type.Contains("Power") ? "W" : ""));
+
                     var parameters = new
                     {
-                        dev_id = deviceId,
-                        tel_value = value,
-                        tel_type = type
+                        p_dev_id = devId,
+                        p_rua_id = ruaId,
+                        p_das_mac_address = mac,
+                        p_das_value = value,
+                        p_das_unit = unit,
+                        p_das_jenis = type,
+                        p_das_timestamp = DateTime.Now,
+                        p_das_created_by = "MQTT_Daemon"
                     };
-                    await conn.ExecuteAsync("IOT_SP_Telemetry_Insert", parameters, commandType: CommandType.StoredProcedure);
-                    _logger.LogInformation("SUKSES: Telemetri [{Type}] device [{DeviceId}] ({Mac}) bernilai {Value} tersimpan ke database.", type, deviceId, mac, value);
+                    await conn.ExecuteAsync("DAS_TRX_Create", parameters, commandType: CommandType.StoredProcedure);
+                    _logger.LogInformation("SUKSES: Telemetri [{Type}] device [{DeviceId}] ({Mac}) bernilai {Value} tersimpan ke database.", type, devId, mac, value);
+                    await SaveDeviceStatusAsync(devId, mac, "Online");
                 }
                 else
                 {
@@ -401,21 +411,26 @@ namespace astratech_apps_backend.Services.Implementations
             try
             {
                 await using var conn = new SqlConnection(_connSia);
-                var deviceId = await conn.QueryFirstOrDefaultAsync<string>(
-                    "IOT_SP_Device_GetIdByMac",
-                    new { Mac = mac },
-                    commandType: CommandType.StoredProcedure);
+                var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                    "SELECT dev_id FROM MST_Device WHERE dev_mac_address = @mac AND dev_is_deleted = 0",
+                    new { mac });
 
-                if (!string.IsNullOrEmpty(deviceId))
+                if (device != null)
                 {
+                    int devId = (int)device.dev_id;
                     var parameters = new
                     {
-                        Id = deviceId,
-                        Status = status,
-                        UpdatedBy = "MQTT_Daemon"
+                        p_dev_id = devId,
+                        p_use_id = "MQTT_Daemon",
+                        p_lok_mac_address = mac,
+                        p_lok_perintah = status,
+                        p_lok_status = "Success",
+                        p_created_by = "MQTT_Daemon"
                     };
-                    await conn.ExecuteAsync("IOT_SP_Device_SetStatus", parameters, commandType: CommandType.StoredProcedure);
-                    _logger.LogInformation("SUKSES: Status device [{DeviceId}] ({Mac}) diubah menjadi {Status}.", deviceId, mac, status);
+                    await conn.ExecuteAsync("LOK_TRX_Create", parameters, commandType: CommandType.StoredProcedure);
+                    _logger.LogInformation("SUKSES: Status device [{DeviceId}] ({Mac}) diubah menjadi {Status}.", devId, mac, status);
+                    string kondisi = status.Equals("ON", StringComparison.OrdinalIgnoreCase) || status.Equals("Online", StringComparison.OrdinalIgnoreCase) ? "Online" : "Offline";
+                    await SaveDeviceStatusAsync(devId, mac, kondisi);
                 }
                 else
                 {
@@ -432,15 +447,52 @@ namespace astratech_apps_backend.Services.Implementations
         {
             try
             {
+                string lookupMac = DeviceMapping.GetMac(deviceId);
                 await using var conn = new SqlConnection(_connSia);
+                
+                var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                    "SELECT dev_id, rua_id FROM MST_Device WHERE dev_mac_address = @lookupMac OR dev_nama = @deviceId",
+                    new { lookupMac, deviceId });
+
+                int devId;
+                int ruaId = 1;
+
+                if (device == null)
+                {
+                    // Auto-register the device if it does not exist in local database
+                    await conn.ExecuteAsync(
+                        "INSERT INTO MST_Device (rua_id, dev_mac_address, dev_nama, dev_type, dev_status, dev_is_deleted, dev_created_by, dev_created_date) VALUES (1, @lookupMac, @deviceId, @type, 'Aktif', 0, 'MQTT_Daemon', GETDATE())",
+                        new { lookupMac, deviceId, type = type == "Power" ? "Power Meter" : "Water Flow Meter" });
+                    
+                    var newDev = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                        "SELECT dev_id, rua_id FROM MST_Device WHERE dev_mac_address = @lookupMac", new { lookupMac });
+                    
+                    devId = (int)newDev.dev_id;
+                    ruaId = (int)newDev.rua_id;
+                    _logger.LogInformation("Auto-registered device: {DeviceId} dengan Int ID: {DevId}", deviceId, devId);
+                }
+                else
+                {
+                    devId = (int)device.dev_id;
+                    ruaId = (int)device.rua_id;
+                }
+
+                string unit = type.Contains("Temp") ? "°C" : (type.Contains("Humi") ? "%" : (type.Contains("Power") ? "W" : ""));
+
                 var parameters = new
                 {
-                    dev_id = deviceId,
-                    tel_value = value,
-                    tel_type = type
+                    p_dev_id = devId,
+                    p_rua_id = ruaId,
+                    p_das_mac_address = deviceId,
+                    p_das_value = value,
+                    p_das_unit = unit,
+                    p_das_jenis = type,
+                    p_das_timestamp = DateTime.Now,
+                    p_das_created_by = "MQTT_Daemon"
                 };
-                await conn.ExecuteAsync("IOT_SP_Telemetry_Insert", parameters, commandType: CommandType.StoredProcedure);
-                _logger.LogInformation("SUKSES: Telemetri [{Type}] device [{DeviceId}] bernilai {Value} tersimpan ke database.", type, deviceId, value);
+                await conn.ExecuteAsync("DAS_TRX_Create", parameters, commandType: CommandType.StoredProcedure);
+                _logger.LogInformation("SUKSES: Telemetri [{Type}] device [{DeviceId}] bernilai {Value} tersimpan ke database.", type, devId, value);
+                await SaveDeviceStatusAsync(devId, lookupMac, "Online");
             }
             catch (Exception ex)
             {
@@ -452,15 +504,30 @@ namespace astratech_apps_backend.Services.Implementations
         {
             try
             {
+                string lookupMac = DeviceMapping.GetMac(deviceId);
                 await using var conn = new SqlConnection(_connSia);
-                var parameters = new
+                var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                    "SELECT dev_id, dev_mac_address FROM MST_Device WHERE dev_mac_address = @lookupMac OR dev_nama = @deviceId",
+                    new { lookupMac, deviceId });
+
+                if (device != null)
                 {
-                    Id = deviceId,
-                    Status = status,
-                    UpdatedBy = "MQTT_Daemon"
-                };
-                await conn.ExecuteAsync("IOT_SP_Device_SetStatus", parameters, commandType: CommandType.StoredProcedure);
-                _logger.LogInformation("SUKSES: Status device [{DeviceId}] diubah menjadi {Status}.", deviceId, status);
+                    int devId = (int)device.dev_id;
+                    string mac = (string)device.dev_mac_address;
+                    var parameters = new
+                    {
+                        p_dev_id = devId,
+                        p_use_id = "MQTT_Daemon",
+                        p_lok_mac_address = mac,
+                        p_lok_perintah = status,
+                        p_lok_status = "Success",
+                        p_created_by = "MQTT_Daemon"
+                    };
+                    await conn.ExecuteAsync("LOK_TRX_Create", parameters, commandType: CommandType.StoredProcedure);
+                    _logger.LogInformation("SUKSES: Status device [{DeviceId}] diubah menjadi {Status}.", devId, status);
+                    string kondisi = status.Equals("ON", StringComparison.OrdinalIgnoreCase) || status.Equals("Online", StringComparison.OrdinalIgnoreCase) ? "Online" : "Offline";
+                    await SaveDeviceStatusAsync(devId, mac, kondisi);
+                }
             }
             catch (Exception ex)
             {
@@ -468,41 +535,36 @@ namespace astratech_apps_backend.Services.Implementations
             }
         }
 
-        private async Task UpdateDeviceLimitMinAsync(string deviceId, double limitMin)
+        private Task UpdateDeviceLimitMinAsync(string deviceId, double limitMin)
         {
-            try
-            {
-                await using var conn = new SqlConnection(_connSia);
-                await conn.ExecuteAsync(
-                    "IOT_SP_Device_UpdateLimitMin",
-                    new { DeviceId = deviceId, LimitMin = limitMin },
-                    commandType: CommandType.StoredProcedure);
-                _logger.LogInformation("SUKSES: Batas minimum (limit_min) device [{DeviceId}] diubah menjadi {LimitMin}.", deviceId, limitMin);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Gagal memperbarui batas minimum device [{DeviceId}]", deviceId);
-            }
+            _logger.LogInformation("Batas minimum device [{DeviceId}] diterima: {LimitMin}. (Diabaikan karena skema database tidak mendukung limit_min)", deviceId, limitMin);
+            return Task.CompletedTask;
         }
 
-        private async Task UpdateDeviceLimitMinByMacAsync(string mac, double limitMin)
+        private Task UpdateDeviceLimitMinByMacAsync(string mac, double limitMin)
+        {
+            _logger.LogInformation("Batas minimum device MAC [{Mac}] diterima: {LimitMin}. (Diabaikan karena skema database tidak mendukung limit_min)", mac, limitMin);
+            return Task.CompletedTask;
+        }
+
+        private async Task SaveDeviceStatusAsync(int devId, string mac, string kondisi)
         {
             try
             {
                 await using var conn = new SqlConnection(_connSia);
-                var resolvedId = await conn.QueryFirstOrDefaultAsync<string>(
-                    "IOT_SP_Device_UpdateLimitMinByMac",
-                    new { Mac = mac, LimitMin = limitMin },
-                    commandType: CommandType.StoredProcedure);
-
-                if (!string.IsNullOrEmpty(resolvedId))
-                    _logger.LogInformation("SUKSES: Batas minimum (limit_min) device [{DeviceId}] ({Mac}) diubah menjadi {LimitMin}.", resolvedId, mac, limitMin);
-                else
-                    _logger.LogWarning("Gagal mengubah limit_min: MAC [{Mac}] tidak terdaftar di database.", mac);
+                var parameters = new
+                {
+                    p_dev_id = devId,
+                    p_stp_mac_address = mac,
+                    p_stp_kondisi = kondisi,
+                    p_stp_timestamp = DateTime.Now,
+                    p_created_by = "MQTT_Daemon"
+                };
+                await conn.ExecuteAsync("STP_TRX_Create", parameters, commandType: CommandType.StoredProcedure);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Gagal memperbarui batas minimum device untuk MAC [{Mac}] ke {LimitMin}", mac, limitMin);
+                _logger.LogError(ex, "Gagal menyimpan status perangkat ke TRX_StatusPerangkat untuk devId {DevId}", devId);
             }
         }
 

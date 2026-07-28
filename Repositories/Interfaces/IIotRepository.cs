@@ -45,6 +45,7 @@ namespace astratech_apps_backend.Repositories.Interfaces
         Task<bool> CreateUserAsync(string username, string roleName, string status, string createdBy);
         Task<bool> UpdateUserAsync(string username, string roleName, string status, string updatedBy);
         Task<bool> DeleteUserAsync(string username);
+        Task<bool> UpdateUsernameSelfAsync(string currentUsername, string newUsername);
 
         // AC Settings
         Task<AcSettings?> GetAcSettingsAsync(string deviceId);

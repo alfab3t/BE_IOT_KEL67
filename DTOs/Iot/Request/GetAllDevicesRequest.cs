@@ -6,6 +6,6 @@ namespace astratech_apps_backend.DTOs.Iot.Request
         public string? Category { get; init; }
         public string? Status { get; init; }
         public int PageNumber { get; init; } = 1;
-        public int PageSize { get; init; } = 10;
+        public int PageSize { get; init; } = 100;
     }
 }
