@@ -11,10 +11,11 @@ namespace astratech_apps_backend.Controllers
     [ApiController]
     [Route("api/[controller]")]
     [Authorize]
-    public sealed class IotController(IIotRepository repo, MqttBackgroundService mqttService) : ControllerBase
+    public sealed class IotController(IIotRepository repo, MqttBackgroundService mqttService, FirebaseService firebaseService) : ControllerBase
     {
         private readonly IIotRepository _repo = repo;
         private readonly MqttBackgroundService _mqttService = mqttService;
+        private readonly FirebaseService _firebaseService = firebaseService;
 
         private string? GetCurrentUsername() => User.FindFirstValue("namaakun");
 
@@ -239,12 +240,12 @@ namespace astratech_apps_backend.Controllers
 
         [HttpGet("dashboard/graph/{deviceId}")]
         [RequiresPermission("dashboard_iot.view")]
-        public async Task<IActionResult> GetDashboardGraph(string deviceId, [FromQuery] string period = "Daily")
+        public async Task<IActionResult> GetDashboardGraph(string deviceId, [FromQuery] string period = "Daily", [FromQuery] string? type = null)
         {
             var username = GetCurrentUsername();
             if (string.IsNullOrEmpty(username)) return Unauthorized();
 
-            var data = await _repo.GetDashboardGraphAsync(deviceId, period);
+            var data = await _repo.GetDashboardGraphAsync(deviceId, period, type);
             return Ok(data);
         }
 
@@ -549,6 +550,27 @@ namespace astratech_apps_backend.Controllers
             if (!success) return BadRequest(new { message = "Gagal menyimpan pengaturan AC." });
             return Ok(new { message = "Pengaturan AC berhasil disimpan." });
         }
+
+        [HttpPost("register-push-token")]
+        [AllowAnonymous] // Allow anyone to register push token if logged in on client side (auth is handled by GetCurrentUsername)
+        public async Task<IActionResult> RegisterPushToken([FromBody] RegisterPushTokenRequest dto)
+        {
+            var username = GetCurrentUsername();
+            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            if (string.IsNullOrEmpty(dto.Token))
+            {
+                return BadRequest(new { message = "Token tidak boleh kosong." });
+            }
+
+            await _firebaseService.SaveTokenAsync(username, dto.Token);
+            return Ok(new { message = "Token push notification berhasil didaftarkan." });
+        }
+    }
+
+    public record RegisterPushTokenRequest
+    {
+        public string Token { get; init; } = string.Empty;
     }
 
     public class SaveUserRequest

@@ -22,7 +22,7 @@ namespace astratech_apps_backend.Repositories.Interfaces
         Task<bool> InsertTelemetryAsync(InsertTelemetryRequest dto);
         Task<IEnumerable<Device>> GetDashboardLatestAsync(string? username);
         Task<DashboardStats> GetDashboardStatsAsync(string? username);
-        Task<IEnumerable<GraphPoint>> GetDashboardGraphAsync(string deviceId, string period);
+        Task<IEnumerable<GraphPoint>> GetDashboardGraphAsync(string deviceId, string period, string? type = null);
         Task<IEnumerable<GraphPoint>> GetDashboardGraphByDateAsync(string deviceId, DateTime selectedDate);
         Task<IEnumerable<GraphPoint>> GetDashboardGraphAverageAsync(string category, string period);
 

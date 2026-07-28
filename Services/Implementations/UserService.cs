@@ -38,25 +38,35 @@ namespace astratech_apps_backend.Services.Implementations
                 );
 
                 var list = result.Select(row => {
-                    var appId = (string)row.app_id;
-                    var roleId = (string)row.rol_id;
-                    var roleName = (string)row.rol_deskripsi;
+                    var appId = (string?)row.app_id ?? "";
+                    var roleId = (string?)row.rol_id ?? "";
+                    var roleName = (string?)row.rol_deskripsi ?? "";
 
                     // Override jika aplikasinya IoT (APP09) dan ada mapping khusus
                     if (appId == "APP09" && iotMapping != null)
                     {
-                        roleId = (string)iotMapping.iot_role_id;
-                        roleName = (string)iotMapping.rol_deskripsi;
+                        var mappingDict = iotMapping as System.Collections.Generic.IDictionary<string, object>;
+                        if (mappingDict != null)
+                        {
+                            if (mappingDict.TryGetValue("iot_role_id", out var valId) && valId is string strId)
+                            {
+                                roleId = strId;
+                            }
+                            if (mappingDict.TryGetValue("rol_deskripsi", out var valDesc) && valDesc is string strDesc)
+                            {
+                                roleName = strDesc;
+                            }
+                        }
                     }
 
                     return new Aplikasi
                     {
-                        NamaAplikasi = (string)row.app_deskripsi,
+                        NamaAplikasi = (string?)row.app_deskripsi ?? "",
                         NamaRole = roleName,
-                        Root = (string)row.app_tautan,
+                        Root = (string?)row.app_tautan ?? "",
                         AppId = appId,
                         RoleId = roleId,
-                        AppIcon = (string)row.app_icon
+                        AppIcon = (string?)row.app_icon ?? ""
                     };
                 }).ToList();
 

@@ -12,14 +12,16 @@ namespace astratech_apps_backend.Services.Implementations
     public class MqttBackgroundService : BackgroundService
     {
         private readonly string _connSia;
+        private readonly FirebaseService _firebaseService;
         private readonly ILogger<MqttBackgroundService> _logger;
         private readonly MqttFactory _mqttFactory;
         private readonly IMqttClient _mqttClient;
         private readonly MqttClientOptions _mqttOptions;
 
-        public MqttBackgroundService(DatabaseConfig dbConfig, ILogger<MqttBackgroundService> logger)
+        public MqttBackgroundService(DatabaseConfig dbConfig, FirebaseService firebaseService, ILogger<MqttBackgroundService> logger)
         {
             _connSia = dbConfig.ConnectionStringSIA;
+            _firebaseService = firebaseService;
             _logger = logger;
 
             _mqttFactory = new MqttFactory();
@@ -165,7 +167,7 @@ namespace astratech_apps_backend.Services.Implementations
                 if ("esp32/water".Equals(topic, StringComparison.OrdinalIgnoreCase))
                 {
                     double val = 0.0;
-                    if (double.TryParse(payload, out val))
+                    if (double.TryParse(payload, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out val))
                     {
                         await SaveTelemetryToDatabaseAsync("DEV_WAT01", val, "WaterFlow");
                     }
@@ -240,7 +242,7 @@ namespace astratech_apps_backend.Services.Implementations
                 }
 
                 double valueOld = 0.0;
-                bool isNumeric = double.TryParse(processedPayload, out valueOld);
+                bool isNumeric = double.TryParse(processedPayload, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out valueOld);
 
                 if ("valTemp0011".Equals(topic) || "valTempS3".Equals(topic))
                 {
@@ -384,6 +386,9 @@ namespace astratech_apps_backend.Services.Implementations
                     };
                     await conn.ExecuteAsync("IOT_SP_Telemetry_Insert", parameters, commandType: CommandType.StoredProcedure);
                     _logger.LogInformation("SUKSES: Telemetri [{Type}] device [{DeviceId}] ({Mac}) bernilai {Value} tersimpan ke database.", type, deviceId, mac, value);
+                    
+                    // Check and send Firebase push notifications if limit was breached
+                    await _firebaseService.CheckAndSendTelemetryAlertAsync(deviceId);
                 }
                 else
                 {
@@ -441,6 +446,9 @@ namespace astratech_apps_backend.Services.Implementations
                 };
                 await conn.ExecuteAsync("IOT_SP_Telemetry_Insert", parameters, commandType: CommandType.StoredProcedure);
                 _logger.LogInformation("SUKSES: Telemetri [{Type}] device [{DeviceId}] bernilai {Value} tersimpan ke database.", type, deviceId, value);
+
+                // Check and send Firebase push notifications if limit was breached
+                await _firebaseService.CheckAndSendTelemetryAlertAsync(deviceId);
             }
             catch (Exception ex)
             {

@@ -363,12 +363,12 @@ namespace astratech_apps_backend.Repositories.Implementations
             }
         }
 
-        public async Task<IEnumerable<GraphPoint>> GetDashboardGraphAsync(string deviceId, string period)
+        public async Task<IEnumerable<GraphPoint>> GetDashboardGraphAsync(string deviceId, string period, string? type = null)
         {
             try
             {
                 await using var conn = new SqlConnection(_conn);
-                var result = await conn.QueryAsync<dynamic>("IOT_SP_Dashboard_GetGraph", new { dev_id = deviceId, Period = period }, commandType: CommandType.StoredProcedure);
+                var result = await conn.QueryAsync<dynamic>("IOT_SP_Dashboard_GetGraph", new { dev_id = deviceId, Period = period, tel_type = type }, commandType: CommandType.StoredProcedure);
                 return result.Select(row => new GraphPoint
                 {
                     AverageValue = (decimal)row.AverageValue,

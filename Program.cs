@@ -112,6 +112,7 @@ namespace astratech_apps_backend
 
             builder.Services.AddScoped<IInstitusiRepository, InstitusiRepository>();
             builder.Services.AddScoped<IIotRepository, IotRepository>();
+            builder.Services.AddSingleton<FirebaseService>();
             builder.Services.AddSingleton<MqttBackgroundService>();
             builder.Services.AddHostedService<MqttBackgroundService>(provider => provider.GetRequiredService<MqttBackgroundService>());
 
