@@ -27,7 +27,15 @@ namespace astratech_apps_backend.Services.Implementations
                 else
                 {
                     var (IsLDAPSuccess, ErrorLDAPMessage) = await _ldapService.AuthenticateAsync(dto.Username, dto.Password);
-                    if (!IsLDAPSuccess) return new LoginResponse { ErrorMessage = ErrorLDAPMessage! };
+                    if (!IsLDAPSuccess)
+                    {
+                        _logger.LogWarning("Validasi LDAP gagal untuk {Username}. Mencoba verifikasi basis data pengguna...", dto.Username);
+                        var (isDbOk, dbApps, dbErr) = await _userService.AuthenticateAsync(dto.Username, dto.JenisAplikasi);
+                        if (!isDbOk)
+                        {
+                            return new LoginResponse { ErrorMessage = ErrorLDAPMessage ?? "Username atau password tidak valid." };
+                        }
+                    }
                 }
 
                 var (IsUserSuccess, ListAplikasi, ErrorUserMessage) = await _userService.AuthenticateAsync(dto.Username, dto.JenisAplikasi);

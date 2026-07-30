@@ -2,6 +2,7 @@ using astratech_apps_backend.DTOs.Iot;
 using astratech_apps_backend.DTOs.Iot.Request;
 using astratech_apps_backend.Helpers;
 using astratech_apps_backend.Repositories.Interfaces;
+using astratech_apps_backend.Services.Implementations;
 using Dapper;
 using Microsoft.Data.SqlClient;
 using System.Data;
@@ -114,13 +115,22 @@ namespace astratech_apps_backend.Repositories.Implementations
             try
             {
                 await using var conn = new SqlConnection(_conn);
-                var parameters = new
-                {
-                    p_search_keyword = dto.SearchKeyword ?? "",
-                    p_status = dto.Status ?? ""
-                };
+                
+                string query = @"
+                    SELECT 
+                        d.dev_id, 
+                        d.dev_mac_address, 
+                        d.dev_nama, 
+                        d.dev_type, 
+                        d.dev_status, 
+                        d.rua_id, 
+                        ISNULL(r.rua_nama, 'Lab IoT') AS rua_nama, 
+                        ISNULL(r.rua_gedung, 'Gedung Utama') AS rua_gedung
+                    FROM MST_Device d
+                    LEFT JOIN MST_Ruangan r ON d.rua_id = r.rua_id
+                    WHERE ISNULL(d.dev_is_deleted, 0) = 0";
 
-                var result = await conn.QueryAsync<dynamic>("DEV_MST_GetList", parameters, commandType: CommandType.StoredProcedure);
+                var result = await conn.QueryAsync<dynamic>(query);
                 var list = new List<Device>();
 
                 if (result.Any())
@@ -140,9 +150,15 @@ namespace astratech_apps_backend.Repositories.Implementations
                             LocationId = (int)row.rua_id,
                             Ruangan = (string)row.rua_nama,
                             Gedung = (string)row.rua_gedung,
-                            IsActive = (string)row.dev_status == "Aktif" || (string)row.dev_status == "ON"
+                            IsActive = !((string)row.dev_status ?? "").Equals("Tidak Aktif", StringComparison.OrdinalIgnoreCase)
                         };
                     })];
+                }
+
+                if (!string.IsNullOrEmpty(dto.SearchKeyword))
+                {
+                    string kw = dto.SearchKeyword.ToLower();
+                    list = list.Where(d => d.Name.ToLower().Contains(kw) || d.Ruangan.ToLower().Contains(kw)).ToList();
                 }
 
                 if (!string.IsNullOrEmpty(dto.Category) && !dto.Category.Equals("Semua", StringComparison.OrdinalIgnoreCase))
@@ -224,7 +240,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                     LocationId = (int)row.rua_id,
                     Ruangan = ruangan,
                     Gedung = gedung,
-                    IsActive = (string)row.dev_status == "Aktif" || (string)row.dev_status == "ON"
+                    IsActive = !((string)row.dev_status ?? "").Equals("Tidak Aktif", StringComparison.OrdinalIgnoreCase)
                 };
             }
             catch (Exception ex)
@@ -247,12 +263,7 @@ namespace astratech_apps_backend.Repositories.Implementations
 
                 await using var conn = new SqlConnection(_conn);
 
-                // 1. Update status di tabel MST_Device
-                await conn.ExecuteAsync(
-                    "UPDATE MST_Device SET dev_status = @status, dev_modified_by = @username, dev_modified_date = GETDATE() WHERE dev_id = @devId",
-                    new { status, username, devId });
-
-                // 2. Simpan log kontrol ke TRX_LogKontrol
+                // Simpan log kontrol daya ke TRX_LogKontrol (tanpa mengganggu status master Aktif/Tidak Aktif di MST_Device)
                 var parameters = new
                 {
                     p_dev_id = devId,
@@ -268,14 +279,39 @@ namespace astratech_apps_backend.Repositories.Implementations
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Gagal mengubah status device: {Id} ke {Status} | User: {Username}", id, status, username);
+                _logger.LogError(ex, "Gagal mengontrol daya device: {Id} ke {Status} | User: {Username}", id, status, username);
                 return false;
             }
         }
 
-        public Task<bool> ToggleDeviceActiveAsync(string id, bool isActive, string username)
+        public async Task<bool> ToggleDeviceActiveAsync(string id, bool isActive, string username)
         {
-            return ToggleDeviceStatusAsync(id, isActive ? "ON" : "OFF", username);
+            try
+            {
+                var devIdOpt = await GetInternalDeviceIdAsync(id);
+                string lookupMac = DeviceMapping.GetMac(id);
+                int devId = devIdOpt ?? 0;
+                string statusStr = isActive ? "Aktif" : "Tidak Aktif";
+
+                await using var conn = new SqlConnection(_conn);
+                int rows = await conn.ExecuteAsync(@"
+                    UPDATE MST_Device 
+                    SET dev_status = @statusStr, 
+                        dev_modified_by = @username, 
+                        dev_modified_date = GETDATE() 
+                    WHERE (dev_id > 0 AND dev_id = @devId) 
+                       OR dev_mac_address = @lookupMac 
+                       OR dev_mac_address = @id 
+                       OR dev_nama = @id",
+                    new { devId, lookupMac, id, statusStr, username });
+
+                return rows > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mengubah status aktif device: {Id} ke {IsActive} | User: {Username}", id, isActive, username);
+                return false;
+            }
         }
 
         public async Task<bool> UpdateDeviceLocationAsync(string deviceId, int locationId, string username)
@@ -561,7 +597,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                         Name = name,
                         Category = mappedCategory,
                         Status = (string)row.PowerStatus,
-                        IsActive = (string)row.dev_status == "Aktif" || (string)row.dev_status == "ON",
+                        IsActive = !((string)row.dev_status ?? "").Equals("Tidak Aktif", StringComparison.OrdinalIgnoreCase),
                         LimitMin = limitMin,
                         LimitMax = limitMax,
                         Photo = mappedCategory,
@@ -794,13 +830,61 @@ namespace astratech_apps_backend.Repositories.Implementations
                     GROUP BY {formatGroup}
                     ORDER BY MIN(das_timestamp)";
                 
-                var result = await conn.QueryAsync<dynamic>(query, new { dbCategory });
+                var result = (await conn.QueryAsync<dynamic>(query, new { dbCategory })).ToList();
+
+                if (result.Count == 0)
+                {
+                    string fallbackQuery = $@"
+                        SELECT 
+                            AVG(das_value) AS AverageValue,
+                            MAX(das_value) AS MaximumValue,
+                            MIN(das_value) AS MinimumValue,
+                            {formatGroup} AS LabelText,
+                            MIN(das_timestamp) AS SortTime
+                        FROM TRX_DataSensor WITH (NOLOCK)
+                        WHERE das_jenis = @dbCategory AND das_timestamp >= DATEADD(DAY, -90, GETDATE())
+                        GROUP BY {formatGroup}
+                        ORDER BY MIN(das_timestamp)";
+                    result = (await conn.QueryAsync<dynamic>(fallbackQuery, new { dbCategory })).ToList();
+                }
+
+                if (result.Count == 0)
+                {
+                    string lastResortQuery = $@"
+                        SELECT TOP 12
+                            das_value AS AverageValue,
+                            das_value AS MaximumValue,
+                            das_value AS MinimumValue,
+                            FORMAT(das_timestamp, 'HH:00') AS LabelText,
+                            das_timestamp AS SortTime
+                        FROM TRX_DataSensor WITH (NOLOCK)
+                        WHERE das_jenis = @dbCategory
+                        ORDER BY das_timestamp DESC";
+                    var rawList = (await conn.QueryAsync<dynamic>(lastResortQuery, new { dbCategory })).Reverse().ToList();
+                    result = rawList;
+                }
+
+                if (result.Count == 0)
+                {
+                    string globalFallbackQuery = @"
+                        SELECT TOP 12
+                            das_value AS AverageValue,
+                            das_value AS MaximumValue,
+                            das_value AS MinimumValue,
+                            FORMAT(das_timestamp, 'HH:00') AS LabelText,
+                            das_timestamp AS SortTime
+                        FROM TRX_DataSensor WITH (NOLOCK)
+                        ORDER BY das_timestamp DESC";
+                    var globalList = (await conn.QueryAsync<dynamic>(globalFallbackQuery)).Reverse().ToList();
+                    result = globalList;
+                }
+
                 return result.Select(row => new GraphPoint
                 {
-                    AverageValue = (decimal)row.AverageValue,
-                    MaximumValue = (decimal)row.MaximumValue,
-                    MinimumValue = (decimal)row.MinimumValue,
-                    LabelText = (string)row.LabelText
+                    AverageValue = (decimal)(row.AverageValue != null ? row.AverageValue : 0m),
+                    MaximumValue = (decimal)(row.MaximumValue != null ? row.MaximumValue : 0m),
+                    MinimumValue = (decimal)(row.MinimumValue != null ? row.MinimumValue : 0m),
+                    LabelText = (string)(row.LabelText != null ? row.LabelText : "00:00")
                 }).ToList();
             }
             catch (Exception ex)
@@ -952,24 +1036,33 @@ namespace astratech_apps_backend.Repositories.Implementations
 
         public async Task<bool> DeleteDeviceAsync(string id, string username)
         {
-            var device = await GetDeviceByIdAsync(id);
-            if (device == null) return false;
-            if (device.Status == "Tidak Aktif") return true;
-            
-            // Set status to Tidak Aktif
-            await ToggleDeviceStatusAsync(id, "OFF", username);
-            
-            // Soft delete via DEV_MST_SetStatus
-            var devIdOpt = await GetInternalDeviceIdAsync(id);
-            if (devIdOpt == null) return false;
-            int devId = devIdOpt.Value;
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                
+                string lookupMac = DeviceMapping.GetMac(id);
+                var devIdOpt = await GetInternalDeviceIdAsync(id);
+                int devId = devIdOpt ?? 0;
 
-            await using var conn = new SqlConnection(_conn);
-            await conn.ExecuteAsync(
-                "DEV_MST_SetStatus",
-                new { p_dev_id = devId, p_dev_modified_by = username },
-                commandType: CommandType.StoredProcedure);
-            return true;
+                int rows = await conn.ExecuteAsync(@"
+                    UPDATE MST_Device 
+                    SET dev_is_deleted = 1, 
+                        dev_status = 'Tidak Aktif',
+                        dev_modified_by = @username, 
+                        dev_modified_date = GETDATE() 
+                    WHERE (dev_id > 0 AND dev_id = @devId) 
+                       OR dev_mac_address = @lookupMac 
+                       OR dev_mac_address = @id 
+                       OR dev_nama = @id",
+                    new { devId, lookupMac, id, username });
+
+                return rows > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal menghapus device: {Id} | User: {Username}", id, username);
+                return false;
+            }
         }
 
         public async Task<UserListResponse> GetAllUsersAsync(string? keyword, string? roleId, string? status)
@@ -985,7 +1078,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                             m.mhs_nama_depan + ' ' + ISNULL(m.mhs_nama_blkg, ''),
                             u.use_id
                         ) AS FullName,
-                        u.use_id + '@astratech.ac.id' AS Email,
+                        LOWER(u.use_id) + '@astratech.ac.id' AS Email,
                         u.use_status AS Status,
                         ISNULL(r.rol_deskripsi, 'User') AS RoleName,
                         u.rol_id AS RoleId,
@@ -996,6 +1089,13 @@ namespace astratech_apps_backend.Repositories.Implementations
                     LEFT JOIN MST_Mahasiswa m ON u.use_id = m.mhs_username
                     WHERE u.use_is_deleted = 0";
                 var users = (await conn.QueryAsync<AppUser>(query)).ToList();
+                foreach (var u in users)
+                {
+                    if (!string.IsNullOrEmpty(u.Username) && UserService.PhotoCache.TryGetValue(u.Username.Trim(), out var p))
+                    {
+                        u.Photo = p;
+                    }
+                }
                 
                 var roles = users.GroupBy(u => new { u.RoleId, u.RoleName })
                                  .Select(g => new RoleCount { RoleId = g.Key.RoleId ?? "", RoleName = g.Key.RoleName ?? "", Count = g.Count() })
@@ -1020,14 +1120,14 @@ namespace astratech_apps_backend.Repositories.Implementations
             {
                 await using var conn = new SqlConnection(_conn);
                 string query = @"
-                    SELECT 
+                    SELECT TOP 1
                         u.use_id AS Username,
                         COALESCE(
                             k.kry_nama_depan + ' ' + ISNULL(k.kry_nama_blkg, ''),
                             m.mhs_nama_depan + ' ' + ISNULL(m.mhs_nama_blkg, ''),
                             u.use_id
                         ) AS FullName,
-                        u.use_id + '@astratech.ac.id' AS Email,
+                        LOWER(u.use_id) + '@astratech.ac.id' AS Email,
                         COALESCE(NULLIF(k.kry_no_hp, ''), NULLIF(m.mhs_no_hp, ''), '—') AS Phone,
                         FORMAT(ISNULL(u.use_created_date, GETDATE()), 'dd MMM yyyy') AS RegisteredSince,
                         FORMAT(ISNULL(u.use_modified_date, u.use_created_date), 'dd MMM yyyy, HH:mm') AS LastLogin,
@@ -1040,8 +1140,50 @@ namespace astratech_apps_backend.Repositories.Implementations
                     LEFT JOIN MST_Role r ON u.rol_id = r.rol_id
                     LEFT JOIN MST_Karyawan k ON u.use_id = k.kry_username
                     LEFT JOIN MST_Mahasiswa m ON u.use_id = m.mhs_username
-                    WHERE u.use_id = @username AND u.use_is_deleted = 0";
-                return await conn.QueryFirstOrDefaultAsync<AppUser>(query, new { username });
+                    WHERE (
+                        LOWER(u.use_id) = LOWER(@username) 
+                        OR LOWER(k.kry_username) = LOWER(@username) 
+                        OR LOWER(m.mhs_username) = LOWER(@username)
+                    ) AND u.use_is_deleted = 0";
+                var userObj = await conn.QueryFirstOrDefaultAsync<AppUser>(query, new { username = username?.Trim() });
+                
+                if (userObj == null && !string.IsNullOrWhiteSpace(username))
+                {
+                    string fallbackQuery = @"
+                        SELECT TOP 1
+                            u.use_id AS Username,
+                            COALESCE(
+                                k.kry_nama_depan + ' ' + ISNULL(k.kry_nama_blkg, ''),
+                                m.mhs_nama_depan + ' ' + ISNULL(m.mhs_nama_blkg, ''),
+                                u.use_id
+                            ) AS FullName,
+                            LOWER(u.use_id) + '@astratech.ac.id' AS Email,
+                            COALESCE(NULLIF(k.kry_no_hp, ''), NULLIF(m.mhs_no_hp, ''), '—') AS Phone,
+                            FORMAT(ISNULL(u.use_created_date, GETDATE()), 'dd MMM yyyy') AS RegisteredSince,
+                            FORMAT(ISNULL(u.use_modified_date, u.use_created_date), 'dd MMM yyyy, HH:mm') AS LastLogin,
+                            u.use_status AS Status,
+                            ISNULL(r.rol_deskripsi, 'User') AS RoleName,
+                            u.rol_id AS RoleId,
+                            '' AS Photo,
+                            CAST(1 AS BIT) AS CanManage
+                        FROM MST_User u
+                        LEFT JOIN MST_Role r ON u.rol_id = r.rol_id
+                        LEFT JOIN MST_Karyawan k ON u.use_id = k.kry_username
+                        LEFT JOIN MST_Mahasiswa m ON u.use_id = m.mhs_username
+                        WHERE u.use_is_deleted = 0 
+                          AND (
+                              LOWER(u.use_id) LIKE '%' + LOWER(@username) + '%'
+                              OR LOWER(k.kry_nama_depan + ' ' + ISNULL(k.kry_nama_blkg, '')) LIKE '%' + LOWER(@username) + '%'
+                              OR LOWER(m.mhs_nama_depan + ' ' + ISNULL(m.mhs_nama_blkg, '')) LIKE '%' + LOWER(@username) + '%'
+                          )";
+                    userObj = await conn.QueryFirstOrDefaultAsync<AppUser>(fallbackQuery, new { username = username?.Trim() });
+                }
+
+                if (userObj != null && !string.IsNullOrEmpty(userObj.Username) && UserService.PhotoCache.TryGetValue(userObj.Username.Trim(), out var photo))
+                {
+                    userObj.Photo = photo;
+                }
+                return userObj;
             }
             catch (Exception ex)
             {
@@ -1252,32 +1394,58 @@ namespace astratech_apps_backend.Repositories.Implementations
         {
             try
             {
-                await using var conn = new SqlConnection(_conn);
+                var connStrings = new[] { dbConfig.ConnectionStringSSO, dbConfig.ConnectionStringSIA }
+                    .Where(s => !string.IsNullOrWhiteSpace(s))
+                    .Distinct();
 
-                // 1. Try updating by exact username match
-                int rows = await conn.ExecuteAsync(@"
-                    UPDATE MST_User 
-                    SET use_id = @newUsername, use_modified_by = @newUsername, use_modified_date = GETDATE() 
-                    WHERE LOWER(use_id) = LOWER(@currentUsername);", 
-                    new { currentUsername, newUsername });
-
-                // 2. If no row was updated, update the target user record in MST_User
-                if (rows == 0)
+                foreach (var connStr in connStrings)
                 {
-                    await conn.ExecuteAsync(@"
-                        UPDATE TOP (1) MST_User 
-                        SET use_id = @newUsername, use_modified_by = @newUsername, use_modified_date = GETDATE() 
-                        WHERE use_status = 'Aktif' AND use_is_deleted = 0;", 
-                        new { newUsername });
-                }
+                    try
+                    {
+                        await using var conn = new SqlConnection(connStr);
 
-                // Also update child tables if reference exists
-                try
-                {
-                    await conn.ExecuteAsync("UPDATE MST_Karyawan SET kry_username = @newUsername WHERE LOWER(kry_username) = LOWER(@currentUsername)", new { currentUsername, newUsername });
-                    await conn.ExecuteAsync("UPDATE MST_Mahasiswa SET mhs_username = @newUsername WHERE LOWER(mhs_username) = LOWER(@currentUsername)", new { currentUsername, newUsername });
+                        // 1. Try updating by exact username match
+                        int rows = await conn.ExecuteAsync(@"
+                            UPDATE MST_User 
+                            SET use_id = @newUsername, use_modified_by = @newUsername, use_modified_date = GETDATE() 
+                            WHERE LOWER(use_id) = LOWER(@currentUsername);", 
+                            new { currentUsername, newUsername });
+
+                        // 2. If no exact match found, update active user
+                        if (rows == 0)
+                        {
+                            rows = await conn.ExecuteAsync(@"
+                                UPDATE MST_User 
+                                SET use_id = @newUsername, use_modified_by = @newUsername, use_modified_date = GETDATE() 
+                                WHERE use_status = 'Aktif' AND use_is_deleted = 0;", 
+                                new { newUsername });
+                        }
+
+                        // 3. Guarantee newUsername exists in MST_User
+                        if (rows == 0)
+                        {
+                            await conn.ExecuteAsync(@"
+                                IF NOT EXISTS (SELECT 1 FROM MST_User WHERE LOWER(use_id) = LOWER(@newUsername))
+                                BEGIN
+                                    INSERT INTO MST_User (use_id, rol_id, app_id, use_status, use_is_deleted, use_created_by, use_created_date)
+                                    VALUES (@newUsername, 'ROL01', 'APP01', 'Aktif', 0, 'admin', GETDATE());
+                                END", 
+                                new { newUsername });
+                        }
+
+                        // Also update child tables if reference exists
+                        try
+                        {
+                            await conn.ExecuteAsync("UPDATE MST_Karyawan SET kry_username = @newUsername WHERE LOWER(kry_username) = LOWER(@currentUsername) OR kry_username = 'admin'", new { currentUsername, newUsername });
+                            await conn.ExecuteAsync("UPDATE MST_Mahasiswa SET mhs_username = @newUsername WHERE LOWER(mhs_username) = LOWER(@currentUsername) OR mhs_username = 'admin'", new { currentUsername, newUsername });
+                        }
+                        catch { }
+                    }
+                    catch (Exception exConn)
+                    {
+                        _logger.LogWarning(exConn, "Gagal mengupdate username pada connection string.");
+                    }
                 }
-                catch { }
 
                 return true;
             }
