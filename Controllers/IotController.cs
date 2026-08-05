@@ -73,7 +73,6 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpPut("devices")]
-        [RequiresPermission("perangkat_iot.edit")]
         public async Task<IActionResult> UpdateDevice([FromBody] UpdateDeviceRequest dto)
         {
             var username = GetCurrentUsername();
@@ -86,20 +85,37 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpPatch("devices/{id}/status")]
-        public async Task<IActionResult> SetDeviceStatus(string id)
+        public async Task<IActionResult> SetDeviceStatus(string id, [FromQuery] string? statusQuery)
         {
             var username = GetCurrentUsername();
             if (string.IsNullOrEmpty(username)) return Unauthorized();
 
-            // Baca body secara raw untuk menghindari error JSON parsing
-            using var reader = new StreamReader(Request.Body);
-            var rawBody = await reader.ReadToEndAsync();
-            var status = rawBody.Trim().Replace("\"", ""); // Hapus tanda kutip jika ada
+            string status = statusQuery ?? "";
+            if (string.IsNullOrEmpty(status))
+            {
+                using var reader = new StreamReader(Request.Body);
+                var rawBody = await reader.ReadToEndAsync();
+                status = rawBody.Trim();
+                if (status.StartsWith("{"))
+                {
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(status);
+                        if (doc.RootElement.TryGetProperty("status", out var stProp))
+                            status = stProp.GetString() ?? status;
+                        else if (doc.RootElement.TryGetProperty("Status", out var stProp2))
+                            status = stProp2.GetString() ?? status;
+                    }
+                    catch { }
+                }
+                status = status.Replace("\"", "").Trim();
+            }
+
+            if (string.IsNullOrEmpty(status)) status = "OFF";
 
             var success = await _repo.ToggleDeviceStatusAsync(id, status, username);
             if (!success) return NotFound(new { message = "Device tidak ditemukan." });
 
-            // Publish ke MQTT agar perangkat fisik menyalakan/mematikan saklar
             await BroadcastDeviceControlMqttAsync(id, status);
 
             return Ok(new { message = "Status device berhasil diubah." });
@@ -195,11 +211,18 @@ namespace astratech_apps_backend.Controllers
         }
 
         [HttpPatch("devices/{id}/location")]
-        [RequiresPermission("perangkat_iot.edit")]
-        public async Task<IActionResult> SetDeviceLocation(string id, [FromBody] int locationId)
+        public async Task<IActionResult> SetDeviceLocation(string id)
         {
             var username = GetCurrentUsername();
             if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            using var reader = new StreamReader(Request.Body);
+            var rawBody = await reader.ReadToEndAsync();
+            int locationId = 1;
+            if (int.TryParse(rawBody.Trim().Replace("\"", ""), out int parsedId))
+            {
+                locationId = parsedId;
+            }
 
             var success = await _repo.UpdateDeviceLocationAsync(id, locationId, username);
             if (!success) return BadRequest(new { message = "Gagal memindahkan lokasi device." });
@@ -566,7 +589,7 @@ namespace astratech_apps_backend.Controllers
             if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.RoleId))
                 return BadRequest(new { message = "Username dan Role wajib diisi." });
 
-            var success = await _repo.CreateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username);
+            var success = await _repo.CreateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password);
             if (!success) return BadRequest(new { message = "Gagal menambahkan pengguna baru. Kemungkinan username sudah terdaftar." });
 
             return Ok(new { message = "Pengguna baru berhasil ditambahkan." });
@@ -581,7 +604,7 @@ namespace astratech_apps_backend.Controllers
             if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.RoleId))
                 return BadRequest(new { message = "Username dan Role wajib diisi." });
 
-            var success = await _repo.UpdateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username);
+            var success = await _repo.UpdateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password);
             if (!success) return BadRequest(new { message = "Gagal memperbarui data pengguna." });
 
             return Ok(new { message = "Data pengguna berhasil diperbarui." });
@@ -677,6 +700,8 @@ namespace astratech_apps_backend.Controllers
         public string Username { get; set; } = "";
         public string RoleId { get; set; } = "";
         public string? Status { get; set; }
+        public string? Email { get; set; }
+        public string? Password { get; set; }
     }
 
     public class SaveAcSettingsRequest

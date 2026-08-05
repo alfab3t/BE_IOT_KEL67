@@ -42,8 +42,8 @@ namespace astratech_apps_backend.Repositories.Interfaces
         Task<UserListResponse> GetAllUsersAsync(string? keyword, string? roleId, string? status);
         Task<AppUser?> GetUserDetailAsync(string username, string? viewerUsername = null);
         Task<bool> SetUserStatusAsync(string username, string status, string updatedBy);
-        Task<bool> CreateUserAsync(string username, string roleName, string status, string createdBy);
-        Task<bool> UpdateUserAsync(string username, string roleName, string status, string updatedBy);
+        Task<bool> CreateUserAsync(string username, string roleName, string status, string createdBy, string? email = null, string? password = null);
+        Task<bool> UpdateUserAsync(string username, string roleName, string status, string updatedBy, string? email = null, string? password = null);
         Task<bool> DeleteUserAsync(string username);
         Task<bool> UpdateUsernameSelfAsync(string currentUsername, string newUsername);
 

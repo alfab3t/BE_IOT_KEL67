@@ -371,8 +371,9 @@ namespace astratech_apps_backend.Services.Implementations
             {
                 await using var conn = new SqlConnection(_connSia);
                 var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
-                    "SELECT dev_id, rua_id FROM MST_Device WHERE dev_mac_address = @mac AND dev_is_deleted = 0",
-                    new { mac });
+                    "DEV_MST_GetByMac",
+                    new { mac },
+                    commandType: CommandType.StoredProcedure);
 
                 if (device != null)
                 {
@@ -412,8 +413,9 @@ namespace astratech_apps_backend.Services.Implementations
             {
                 await using var conn = new SqlConnection(_connSia);
                 var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
-                    "SELECT dev_id FROM MST_Device WHERE dev_mac_address = @mac AND dev_is_deleted = 0",
-                    new { mac });
+                    "DEV_MST_GetByMac",
+                    new { mac },
+                    commandType: CommandType.StoredProcedure);
 
                 if (device != null)
                 {
@@ -448,27 +450,29 @@ namespace astratech_apps_backend.Services.Implementations
             try
             {
                 string lookupMac = DeviceMapping.GetMac(deviceId);
-                await using var conn = new SqlConnection(_connSia);
-                
-                var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
-                    "SELECT dev_id, rua_id FROM MST_Device WHERE dev_mac_address = @lookupMac OR dev_nama = @deviceId",
-                    new { lookupMac, deviceId });
+                await using var conn = new SqlConnection(_connSia);                var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
+                    "DEV_MST_GetByMacOrName",
+                    new { id = deviceId, lookupMac, deviceId },
+                    commandType: CommandType.StoredProcedure);
 
                 int devId;
                 int ruaId = 1;
 
                 if (device == null)
                 {
-                    // Auto-register the device if it does not exist in local database
+                    // Auto-register device via Stored Procedure
                     await conn.ExecuteAsync(
-                        "INSERT INTO MST_Device (rua_id, dev_mac_address, dev_nama, dev_type, dev_status, dev_is_deleted, dev_created_by, dev_created_date) VALUES (1, @lookupMac, @deviceId, @type, 'Aktif', 0, 'MQTT_Daemon', GETDATE())",
-                        new { lookupMac, deviceId, type = type == "Power" ? "Power Meter" : "Water Flow Meter" });
+                        "DEV_MST_AutoRegister",
+                        new { lookupMac, deviceId, type = type == "Power" ? "Power Meter" : "Water Flow Meter" },
+                        commandType: CommandType.StoredProcedure);
                     
                     var newDev = await conn.QueryFirstOrDefaultAsync<dynamic>(
-                        "SELECT dev_id, rua_id FROM MST_Device WHERE dev_mac_address = @lookupMac", new { lookupMac });
+                        "DEV_MST_GetByMac",
+                        new { lookupMac },
+                        commandType: CommandType.StoredProcedure);
                     
-                    devId = (int)newDev.dev_id;
-                    ruaId = (int)newDev.rua_id;
+                    devId = newDev != null ? (int)newDev.dev_id : 1;
+                    ruaId = newDev != null ? (int)newDev.rua_id : 1;
                     _logger.LogInformation("Auto-registered device: {DeviceId} dengan Int ID: {DevId}", deviceId, devId);
                 }
                 else
@@ -507,8 +511,9 @@ namespace astratech_apps_backend.Services.Implementations
                 string lookupMac = DeviceMapping.GetMac(deviceId);
                 await using var conn = new SqlConnection(_connSia);
                 var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
-                    "SELECT dev_id, dev_mac_address FROM MST_Device WHERE dev_mac_address = @lookupMac OR dev_nama = @deviceId",
-                    new { lookupMac, deviceId });
+                    "DEV_MST_GetByMacOrName",
+                    new { lookupMac, deviceId },
+                    commandType: CommandType.StoredProcedure);
 
                 if (device != null)
                 {

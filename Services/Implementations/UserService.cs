@@ -26,6 +26,10 @@ namespace astratech_apps_backend.Services.Implementations
             {
                 return await Task.FromResult(photo);
             }
+            if (PhotoCache.Count > 0)
+            {
+                return await Task.FromResult(PhotoCache.Values.LastOrDefault());
+            }
             return await Task.FromResult((string?)null);
         }
 
@@ -33,42 +37,21 @@ namespace astratech_apps_backend.Services.Implementations
         {
             try
             {
-                await using var conn = new SqlConnection(_conn);
-                string query = @"
-                    SELECT
-                        ISNULL(a.app_deskripsi, 'Aplikasi IoT Astratech') AS NamaAplikasi,
-                        ISNULL(r.rol_deskripsi, 'User') AS NamaRole,
-                        ISNULL(a.app_tautan, '/') AS Root,
-                        ISNULL(a.app_id, 'APP01') AS AppId,
-                        ISNULL(r.rol_id, 'ROL01') AS RoleId
-                    FROM MST_User u
-                    LEFT JOIN MST_Role r ON u.rol_id = r.rol_id
-                    LEFT JOIN MST_Aplikasi a ON u.app_id = a.app_id
-                    WHERE (LOWER(u.use_id) = LOWER(@Username) OR (LOWER(@Username) = 'admin' AND (u.rol_id = 'ROL01' OR u.rol_id = 'ROL001')))
-                      AND u.use_status = 'Aktif'
-                      AND u.use_is_deleted = 0;";
-
-                var result = await conn.QueryAsync<dynamic>(query, new { Username = username?.Trim(), JenisAplikasi = jenisAplikasi });
-
-                if (!result.Any())
+                if (string.IsNullOrWhiteSpace(username))
                 {
-                    // Fallback to active system roles if exact username string matching fails
-                    string fallbackQuery = @"
-                        SELECT TOP 1
-                            ISNULL(a.app_deskripsi, 'Aplikasi IoT Astratech') AS NamaAplikasi,
-                            ISNULL(r.rol_deskripsi, 'User') AS NamaRole,
-                            ISNULL(a.app_tautan, '/') AS Root,
-                            ISNULL(a.app_id, 'APP01') AS AppId,
-                            ISNULL(r.rol_id, 'ROL01') AS RoleId
-                        FROM MST_User u
-                        LEFT JOIN MST_Role r ON u.rol_id = r.rol_id
-                        LEFT JOIN MST_Aplikasi a ON u.app_id = a.app_id
-                        WHERE u.use_status = 'Aktif' AND u.use_is_deleted = 0;";
-                    result = await conn.QueryAsync<dynamic>(fallbackQuery);
+                    return (false, [], "Username atau password tidak valid.");
                 }
 
-                if (!result.Any())
+                await using var conn = new SqlConnection(_conn);
+                var result = await conn.QueryAsync<dynamic>(
+                    "USR_SP_Authenticate",
+                    new { Username = username.Trim(), JenisAplikasi = jenisAplikasi },
+                    commandType: CommandType.StoredProcedure
+                );
+
+                if (result == null || !result.Any())
                 {
+                    _logger.LogWarning("Autentikasi ditolak: User [{Username}] tidak terdaftar atau tidak aktif di basis data.", username);
                     return (false, [], "Username atau password tidak valid.");
                 }
 

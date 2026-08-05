@@ -1,5 +1,14 @@
 namespace astratech_apps_backend.DTOs.Iot
 {
+    public record LocationHistoryItem
+    {
+        public string PeriodText { get; init; } = string.Empty;
+        public string Ruangan { get; init; } = string.Empty;
+        public string Gedung { get; init; } = string.Empty;
+        public string UpdatedBy { get; init; } = string.Empty;
+        public string TimestampText { get; init; } = string.Empty;
+    }
+
     public record Device
     {
         public string Id { get; init; } = string.Empty;
@@ -16,5 +25,6 @@ namespace astratech_apps_backend.DTOs.Iot
         public string? Lantai { get; init; }
         public string? Ruangan { get; init; }
         public long RowNumber { get; init; } = 0;
+        public List<LocationHistoryItem> LocationHistory { get; init; } = new();
     }
 }
