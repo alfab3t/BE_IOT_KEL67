@@ -16,24 +16,15 @@ namespace astratech_apps_backend.Services.Implementations
         public async Task<bool> UpdateProfilePhotoAsync(string username, string photoBase64)
         {
             if (string.IsNullOrEmpty(username)) return false;
-            PhotoCache["_global_current_photo"] = photoBase64;
             PhotoCache[username.Trim()] = photoBase64;
             return await Task.FromResult(true);
         }
 
         public async Task<string?> GetProfilePhotoAsync(string username)
         {
-            if (PhotoCache.TryGetValue("_global_current_photo", out var globalPhoto) && !string.IsNullOrEmpty(globalPhoto))
-            {
-                return await Task.FromResult(globalPhoto);
-            }
             if (!string.IsNullOrEmpty(username) && PhotoCache.TryGetValue(username.Trim(), out var photo))
             {
                 return await Task.FromResult(photo);
-            }
-            if (PhotoCache.Count > 0)
-            {
-                return await Task.FromResult(PhotoCache.Values.LastOrDefault());
             }
             return await Task.FromResult((string?)null);
         }
