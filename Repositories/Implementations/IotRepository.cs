@@ -1238,6 +1238,12 @@ namespace astratech_apps_backend.Repositories.Implementations
                     if (UserService.PhotoCache.TryGetValue(oldKey, out var photo) && !string.IsNullOrEmpty(photo))
                     {
                         UserService.PhotoCache[newKey] = photo;
+                        UserService.PhotoCache["_global_current_photo"] = photo;
+                    }
+                    else if (UserService.PhotoCache.TryGetValue("_global_current_photo", out var gPhoto) && !string.IsNullOrEmpty(gPhoto))
+                    {
+                        UserService.PhotoCache[newKey] = gPhoto;
+                        UserService.PhotoCache[oldKey] = gPhoto;
                     }
                 }
 

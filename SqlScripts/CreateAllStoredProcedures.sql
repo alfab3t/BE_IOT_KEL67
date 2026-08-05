@@ -206,7 +206,7 @@ BEGIN
             m.mhs_nama_depan + ' ' + ISNULL(m.mhs_nama_blkg, ''),
             u.use_id
         ) AS FullName,
-        LOWER(u.use_id) + '@astratech.ac.id' AS Email,
+        ISNULL(NULLIF(u.use_email, ''), LOWER(u.use_id) + '@astratech.ac.id') AS Email,
         u.use_status AS Status,
         ISNULL(r.rol_deskripsi, 'User') AS RoleName,
         u.rol_id AS RoleId,
@@ -215,7 +215,10 @@ BEGIN
     LEFT JOIN MST_Role r ON u.rol_id = r.rol_id
     LEFT JOIN MST_Karyawan k ON u.use_id = k.kry_username
     LEFT JOIN MST_Mahasiswa m ON u.use_id = m.mhs_username
-    WHERE u.use_is_deleted = 0;
+    WHERE u.use_is_deleted = 0
+      AND (@keyword IS NULL OR @keyword = '' OR u.use_id LIKE '%' + @keyword + '%' OR u.use_email LIKE '%' + @keyword + '%')
+      AND (@roleId IS NULL OR @roleId = '' OR u.rol_id = @roleId OR r.rol_deskripsi = @roleId)
+      AND (@status IS NULL OR @status = '' OR u.use_status = @status);
 END;
 GO
 
@@ -234,7 +237,7 @@ BEGIN
             m.mhs_nama_depan + ' ' + ISNULL(m.mhs_nama_blkg, ''),
             u.use_id
         ) AS FullName,
-        LOWER(u.use_id) + '@astratech.ac.id' AS Email,
+        ISNULL(NULLIF(u.use_email, ''), LOWER(u.use_id) + '@astratech.ac.id') AS Email,
         COALESCE(NULLIF(k.kry_no_hp, ''), NULLIF(m.mhs_no_hp, ''), '—') AS Phone,
         FORMAT(ISNULL(u.use_created_date, GETDATE()), 'dd MMM yyyy') AS RegisteredSince,
         FORMAT(ISNULL(u.use_modified_date, u.use_created_date), 'dd MMM yyyy, HH:mm') AS LastLogin,
@@ -249,6 +252,7 @@ BEGIN
     LEFT JOIN MST_Mahasiswa m ON u.use_id = m.mhs_username
     WHERE (
         LOWER(u.use_id) = LOWER(@username) 
+        OR LOWER(ISNULL(u.use_email, '')) = LOWER(@username)
         OR LOWER(k.kry_username) = LOWER(@username) 
         OR LOWER(m.mhs_username) = LOWER(@username)
     ) AND u.use_is_deleted = 0;
