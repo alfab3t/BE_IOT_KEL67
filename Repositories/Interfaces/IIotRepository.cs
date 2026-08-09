@@ -22,9 +22,9 @@ namespace astratech_apps_backend.Repositories.Interfaces
         Task<bool> InsertTelemetryAsync(InsertTelemetryRequest dto);
         Task<IEnumerable<Device>> GetDashboardLatestAsync(string? username);
         Task<DashboardStats> GetDashboardStatsAsync(string? username);
-        Task<IEnumerable<GraphPoint>> GetDashboardGraphAsync(string deviceId, string period);
+        Task<IEnumerable<GraphPoint>> GetDashboardGraphAsync(string deviceId, string period, DateTime? startDate = null, DateTime? endDate = null);
         Task<IEnumerable<GraphPoint>> GetDashboardGraphByDateAsync(string deviceId, DateTime selectedDate);
-        Task<IEnumerable<GraphPoint>> GetDashboardGraphAverageAsync(string category, string period);
+        Task<IEnumerable<GraphPoint>> GetDashboardGraphAverageAsync(string category, string period, DateTime? startDate = null, DateTime? endDate = null);
 
         Task<bool> AssignAccessAsync(string targetUsername, string deviceId, string createdBy);
         Task<bool> RemoveAccessAsync(string targetUsername, string deviceId);
@@ -42,8 +42,8 @@ namespace astratech_apps_backend.Repositories.Interfaces
         Task<UserListResponse> GetAllUsersAsync(string? keyword, string? roleId, string? status);
         Task<AppUser?> GetUserDetailAsync(string username, string? viewerUsername = null);
         Task<bool> SetUserStatusAsync(string username, string status, string updatedBy);
-        Task<bool> CreateUserAsync(string username, string roleName, string status, string createdBy, string? email = null, string? password = null);
-        Task<bool> UpdateUserAsync(string username, string roleName, string status, string updatedBy, string? email = null, string? password = null);
+        Task<bool> CreateUserAsync(string username, string roleInput, string status, string createdBy, string? email = null, string? password = null, string? photo = null);
+        Task<bool> UpdateUserAsync(string username, string roleInput, string status, string updatedBy, string? email = null, string? password = null, string? photo = null);
         Task<bool> DeleteUserAsync(string username);
         Task<bool> UpdateUsernameSelfAsync(string currentUsername, string newUsername);
 

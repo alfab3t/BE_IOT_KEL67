@@ -807,47 +807,20 @@ namespace astratech_apps_backend.Repositories.Implementations
             }
         }
 
-        public async Task<IEnumerable<GraphPoint>> GetDashboardGraphAsync(string deviceId, string period)
+        public async Task<IEnumerable<GraphPoint>> GetDashboardGraphAverageAsync(string category, string period, DateTime? startDate = null, DateTime? endDate = null)
         {
             try
             {
                 await using var conn = new SqlConnection(_conn);
-                var result = await conn.QueryAsync<dynamic>(
-                    "IOT_SP_Graph_Get",
-                    new { DeviceId = deviceId, Period = period },
-                    commandType: CommandType.StoredProcedure
-                );
+                DateTime? adjustedStartDate = startDate?.Date;
+                DateTime? adjustedEndDate = endDate?.Date.AddDays(1).AddTicks(-1);
 
-                if (result == null) return [];
-
-                return result.Select(row => new GraphPoint
-                {
-                    AverageValue = (decimal)(row.AverageValue ?? 0m),
-                    MaximumValue = (decimal)(row.MaximumValue ?? 0m),
-                    MinimumValue = (decimal)(row.MinimumValue ?? 0m),
-                    LabelText = (string)(row.LabelText ?? "00:00")
-                }).ToList();
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Gagal mendapatkan data grafik telemetri untuk device: {DeviceId}", deviceId);
-                return [];
-            }
-        }
-
-        public async Task<IEnumerable<GraphPoint>> GetDashboardGraphAverageAsync(string category, string period)
-        {
-            try
-            {
-                await using var conn = new SqlConnection(_conn);
                 var result = await conn.QueryAsync<dynamic>(
                     "IOT_SP_GraphAverage_Get",
-                    new { Category = category, Period = period },
+                    new { Category = category, Period = period, StartDate = adjustedStartDate, EndDate = adjustedEndDate },
                     commandType: CommandType.StoredProcedure
                 );
-
                 if (result == null) return [];
-
                 return result.Select(row => new GraphPoint
                 {
                     AverageValue = (decimal)(row.AverageValue ?? 0m),
@@ -858,11 +831,39 @@ namespace astratech_apps_backend.Repositories.Implementations
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Gagal mendapatkan data grafik rata-rata telemetri untuk kategori: {Category}", category);
+                _logger.LogError(ex, "Gagal mendapatkan data grafik rata-rata: {Category}", category);
                 return [];
             }
         }
 
+        public async Task<IEnumerable<GraphPoint>> GetDashboardGraphAsync(string deviceId, string period, DateTime? startDate = null, DateTime? endDate = null)
+        {
+            try
+            {
+                await using var conn = new SqlConnection(_conn);
+                DateTime? adjustedStartDate = startDate?.Date;
+                DateTime? adjustedEndDate = endDate?.Date.AddDays(1).AddTicks(-1);
+
+                var result = await conn.QueryAsync<dynamic>(
+                    "IOT_SP_Graph_Get",
+                    new { DeviceId = deviceId, Period = period, StartDate = adjustedStartDate, EndDate = adjustedEndDate },
+                    commandType: CommandType.StoredProcedure
+                );
+                if (result == null) return [];
+                return result.Select(row => new GraphPoint
+                {
+                    AverageValue = (decimal)(row.AverageValue ?? 0m),
+                    MaximumValue = (decimal)(row.MaximumValue ?? 0m),
+                    MinimumValue = (decimal)(row.MinimumValue ?? 0m),
+                    LabelText = (string)(row.LabelText ?? "00:00")
+                }).ToList();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Gagal mendapatkan data grafik: {DeviceId}", deviceId);
+                return [];
+            }
+        }
         public Task<bool> AssignAccessAsync(string targetUsername, string deviceId, string createdBy)
         {
             return Task.FromResult(true);
@@ -1080,7 +1081,7 @@ namespace astratech_apps_backend.Repositories.Implementations
             }
         }
 
-        public async Task<bool> CreateUserAsync(string username, string roleInput, string status, string createdBy, string? email = null, string? password = null)
+        public async Task<bool> CreateUserAsync(string username, string roleInput, string status, string createdBy, string? email = null, string? password = null, string? photo = null)
         {
             try
             {
@@ -1094,28 +1095,28 @@ namespace astratech_apps_backend.Repositories.Implementations
                 string safeStatus = string.IsNullOrEmpty(status) ? "Aktif" : status;
                 string safeCreator = string.IsNullOrEmpty(createdBy) ? "admin" : createdBy;
 
-                string? passwordHash = null;
-                if (!string.IsNullOrWhiteSpace(password))
-                {
-                    passwordHash = BCrypt.Net.BCrypt.HashPassword(password);
-                }
-                else
-                {
-                    passwordHash = BCrypt.Net.BCrypt.HashPassword("123456");
-                }
+                string? passwordHash = !string.IsNullOrWhiteSpace(password)
+                    ? BCrypt.Net.BCrypt.HashPassword(password)
+                    : BCrypt.Net.BCrypt.HashPassword("123456");
 
                 await conn.ExecuteAsync(
                     "USE_MST_Create",
-                    new { 
-                        p_use_id = username.Trim(), 
-                        p_rol_id = dbRoleId, 
-                        p_app_id = "APP01", 
-                        p_use_email = email?.Trim(), 
-                        p_use_password = passwordHash, 
-                        p_use_created_by = safeCreator 
+                    new
+                    {
+                        p_use_id = username.Trim(),
+                        p_rol_id = dbRoleId,
+                        p_app_id = "APP01",
+                        p_use_email = email?.Trim(),
+                        p_use_password = passwordHash,
+                        p_use_created_by = safeCreator
                     },
                     commandType: CommandType.StoredProcedure
                 );
+
+                if (!string.IsNullOrWhiteSpace(photo))
+                {
+                    UserService.PhotoCache[username.Trim()] = photo; 
+                }
 
                 return true;
             }
@@ -1126,7 +1127,7 @@ namespace astratech_apps_backend.Repositories.Implementations
             }
         }
 
-        public async Task<bool> UpdateUserAsync(string username, string roleInput, string status, string updatedBy, string? email = null, string? password = null)
+        public async Task<bool> UpdateUserAsync(string username, string roleInput, string status, string updatedBy, string? email = null, string? password = null, string? photo = null)
         {
             try
             {
@@ -1140,25 +1141,34 @@ namespace astratech_apps_backend.Repositories.Implementations
                 string safeStatus = string.IsNullOrEmpty(status) ? "Aktif" : status;
                 string safeUpdater = string.IsNullOrEmpty(updatedBy) ? "admin" : updatedBy;
 
-                string? passwordHash = null;
-                if (!string.IsNullOrWhiteSpace(password))
-                {
-                    passwordHash = BCrypt.Net.BCrypt.HashPassword(password);
-                }
+                string? passwordHash = !string.IsNullOrWhiteSpace(password)
+                    ? BCrypt.Net.BCrypt.HashPassword(password)
+                    : null;
 
                 await conn.ExecuteAsync(
                     "USE_MST_Update",
-                    new { 
-                        p_use_id = username.Trim(), 
-                        p_rol_id = dbRoleId, 
-                        p_app_id = "APP01", 
+                    new
+                    {
+                        p_use_id = username.Trim(),
+                        p_rol_id = dbRoleId,
+                        p_app_id = "APP01",
                         p_use_status = safeStatus,
-                        p_use_email = email?.Trim(), 
-                        p_use_password = passwordHash, 
-                        p_use_modified_by = safeUpdater 
+                        p_use_email = email?.Trim(),
+                        p_use_password = passwordHash,
+                        p_use_modified_by = safeUpdater
                     },
                     commandType: CommandType.StoredProcedure
                 );
+
+                string key = username.Trim();
+                if (!string.IsNullOrWhiteSpace(photo))
+                {
+                    UserService.PhotoCache[key] = photo;   
+                }
+                else
+                {
+                    UserService.PhotoCache.Remove(key);     
+                }
 
                 return true;
             }
@@ -1168,7 +1178,6 @@ namespace astratech_apps_backend.Repositories.Implementations
                 return false;
             }
         }
-
         public async Task<bool> DeleteUserAsync(string username)
         {
             try

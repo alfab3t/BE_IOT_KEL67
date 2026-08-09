@@ -312,23 +312,31 @@ namespace astratech_apps_backend.Controllers
             return Ok(data);
         }
 
-        [HttpGet("dashboard/graph/{deviceId}")]
-        public async Task<IActionResult> GetDashboardGraph(string deviceId, [FromQuery] string period = "Daily")
+        [HttpGet("dashboard/graph-average")]
+        public async Task<IActionResult> GetDashboardGraphAverage(
+        [FromQuery] string category,
+        [FromQuery] string period = "Daily",
+        [FromQuery] DateTime? startDate = null,
+        [FromQuery] DateTime? endDate = null)
         {
             var username = GetCurrentUsername();
             if (string.IsNullOrEmpty(username)) return Unauthorized();
 
-            var data = await _repo.GetDashboardGraphAsync(deviceId, period);
+            var data = await _repo.GetDashboardGraphAverageAsync(category, period, startDate, endDate);
             return Ok(data);
         }
 
-        [HttpGet("dashboard/graph-average")]
-        public async Task<IActionResult> GetDashboardGraphAverage([FromQuery] string category, [FromQuery] string period = "Daily")
+        [HttpGet("dashboard/graph/{deviceId}")]
+        public async Task<IActionResult> GetDashboardGraph(
+            string deviceId,
+            [FromQuery] string period = "Daily",
+            [FromQuery] DateTime? startDate = null,
+            [FromQuery] DateTime? endDate = null)
         {
             var username = GetCurrentUsername();
             if (string.IsNullOrEmpty(username)) return Unauthorized();
 
-            var data = await _repo.GetDashboardGraphAverageAsync(category, period);
+            var data = await _repo.GetDashboardGraphAsync(deviceId, period, startDate, endDate);
             return Ok(data);
         }
 
@@ -589,7 +597,7 @@ namespace astratech_apps_backend.Controllers
             if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.RoleId))
                 return BadRequest(new { message = "Username dan Role wajib diisi." });
 
-            var success = await _repo.CreateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password);
+            var success = await _repo.CreateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password, request.Photo); // ✅ tambah request.Photo
             if (!success) return BadRequest(new { message = "Gagal menambahkan pengguna baru. Kemungkinan username sudah terdaftar." });
 
             return Ok(new { message = "Pengguna baru berhasil ditambahkan." });
@@ -604,7 +612,7 @@ namespace astratech_apps_backend.Controllers
             if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.RoleId))
                 return BadRequest(new { message = "Username dan Role wajib diisi." });
 
-            var success = await _repo.UpdateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password);
+            var success = await _repo.UpdateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password, request.Photo); // ✅ tambah request.Photo
             if (!success) return BadRequest(new { message = "Gagal memperbarui data pengguna." });
 
             return Ok(new { message = "Data pengguna berhasil diperbarui." });
@@ -702,6 +710,7 @@ namespace astratech_apps_backend.Controllers
         public string? Status { get; set; }
         public string? Email { get; set; }
         public string? Password { get; set; }
+        public string? Photo { get; set; }
     }
 
     public class SaveAcSettingsRequest
