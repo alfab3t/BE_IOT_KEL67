@@ -25,6 +25,6 @@ namespace astratech_apps_backend.DTOs.Iot
         public string? Lantai { get; init; }
         public string? Ruangan { get; init; }
         public long RowNumber { get; init; } = 0;
-        public List<LocationHistoryItem> LocationHistory { get; init; } = new();
+        public List<LocationHistoryItem> LocationHistory { get; init; } = [];
     }
 }

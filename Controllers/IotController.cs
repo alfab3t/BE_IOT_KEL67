@@ -96,7 +96,7 @@ namespace astratech_apps_backend.Controllers
                 using var reader = new StreamReader(Request.Body);
                 var rawBody = await reader.ReadToEndAsync();
                 status = rawBody.Trim();
-                if (status.StartsWith("{"))
+                if (status.StartsWith('{'))
                 {
                     try
                     {
@@ -111,8 +111,10 @@ namespace astratech_apps_backend.Controllers
                 status = status.Replace("\"", "").Trim();
             }
 
-            if (string.IsNullOrEmpty(status)) status = "OFF";
-
+            if (string.IsNullOrEmpty(status))
+            {
+                status = "OFF";
+            }
             var success = await _repo.ToggleDeviceStatusAsync(id, status, username);
             if (!success) return NotFound(new { message = "Device tidak ditemukan." });
 
@@ -149,7 +151,6 @@ namespace astratech_apps_backend.Controllers
 
             if (isLamp)
             {
-                // 1. Broadcast ke topik utama Lampu
                 await _mqttService.PublishMessageAsync("setPowerLAMP01", payloadDigit);
                 await _mqttService.PublishMessageAsync("setPowerLAMP02", payloadDigit);
                 await _mqttService.PublishMessageAsync("setPowerLampu", payloadDigit);
@@ -158,12 +159,11 @@ namespace astratech_apps_backend.Controllers
                 await _mqttService.PublishMessageAsync("setPowerLAMP02", payloadText);
                 await _mqttService.PublishMessageAsync("setPowerLampu", payloadText);
 
-                // 2. Broadcast ke modul hardware Lampu (ESP8266 & MAC Lampu)
                 var lampMacs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    "84:F3:EB:B4:51:4F", // Board ESP8266 Lampu
-                    "97:89:1D:AD:FE:4A", // MAC Lampu 1
-                    "E5:B5:54:7C:5C:18"  // MAC Lampu 2
+                    "84:F3:EB:B4:51:4F", 
+                    "97:89:1D:AD:FE:4A", 
+                    "E5:B5:54:7C:5C:18"  
                 };
                 if (!string.IsNullOrEmpty(mac)) lampMacs.Add(mac);
 
@@ -177,17 +177,15 @@ namespace astratech_apps_backend.Controllers
             }
             else if (isAc)
             {
-                // 1. Broadcast ke topik utama AC
                 await _mqttService.PublishMessageAsync("setPower00121", payloadDigit);
                 await _mqttService.PublishMessageAsync("setPowerS3", payloadDigit);
 
                 await _mqttService.PublishMessageAsync("setPower00121", payloadText);
                 await _mqttService.PublishMessageAsync("setPowerS3", payloadText);
 
-                // 2. Broadcast ke modul hardware AC (ESP32-S3)
                 var acMacs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    "B8:F8:62:62:1E:84" // Board ESP32-S3 AC
+                    "B8:F8:62:62:1E:84" 
                 };
                 if (!string.IsNullOrEmpty(mac)) acMacs.Add(mac);
 
@@ -201,7 +199,6 @@ namespace astratech_apps_backend.Controllers
             }
             else
             {
-                // Broadcast ke perangkat spesifik (by MAC address)
                 if (!string.IsNullOrEmpty(mac))
                 {
                     await _mqttService.PublishMessageAsync($"device/{mac}/control", payloadDigit);
@@ -429,7 +426,6 @@ namespace astratech_apps_backend.Controllers
             var username = GetCurrentUsername();
             if (string.IsNullOrEmpty(username)) return Unauthorized();
 
-            // Broadcast ke topik utama yang diminta dari Frontend
             await _mqttService.PublishMessageAsync(topic, payload);
 
             var acMacs = new[] { "24:2C:70:39:65:14", "48:2F:50:5C:ED:2D" };
@@ -439,11 +435,9 @@ namespace astratech_apps_backend.Controllers
                 string dbStatus = (payload == "1" || payload.Equals("ON", StringComparison.OrdinalIgnoreCase) || payload == "1.0") ? "ON" : "OFF";
                 string payloadDigit = dbStatus == "ON" ? "1" : "0";
 
-                // Update status di DB untuk perangkat AC
                 await _repo.ToggleDeviceStatusAsync("DEV_AC01", dbStatus, username);
                 await _repo.ToggleDeviceStatusAsync("DEV_AC02", dbStatus, username);
 
-                // Kirim HANYA payload angka bersih ("1" atau "0") ke topik power AC fisik (ESP8266 & ESP32-S3)
                 await _mqttService.PublishMessageAsync("setPower00121", payloadDigit);
                 await _mqttService.PublishMessageAsync("setPowerS3", payloadDigit);
                 await _mqttService.PublishMessageAsync("setPowerAC01", payloadDigit);
@@ -546,7 +540,6 @@ namespace astratech_apps_backend.Controllers
 
             return Ok(new { message = "Device berhasil dihapus." });
         }
-        // ── User Management ──────────────────────────────────────────────────
 
         [HttpGet("users")]
         public async Task<IActionResult> GetAllUsers(
@@ -597,7 +590,7 @@ namespace astratech_apps_backend.Controllers
             if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.RoleId))
                 return BadRequest(new { message = "Username dan Role wajib diisi." });
 
-            var success = await _repo.CreateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password, request.Photo); // ✅ tambah request.Photo
+            var success = await _repo.CreateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password, request.Photo); 
             if (!success) return BadRequest(new { message = "Gagal menambahkan pengguna baru. Kemungkinan username sudah terdaftar." });
 
             return Ok(new { message = "Pengguna baru berhasil ditambahkan." });
@@ -612,7 +605,7 @@ namespace astratech_apps_backend.Controllers
             if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.RoleId))
                 return BadRequest(new { message = "Username dan Role wajib diisi." });
 
-            var success = await _repo.UpdateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password, request.Photo); // ✅ tambah request.Photo
+            var success = await _repo.UpdateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password, request.Photo); 
             if (!success) return BadRequest(new { message = "Gagal memperbarui data pengguna." });
 
             return Ok(new { message = "Data pengguna berhasil diperbarui." });
@@ -630,7 +623,6 @@ namespace astratech_apps_backend.Controllers
             return Ok(new { message = "Hak akses pengguna berhasil dicabut." });
         }
 
-        // ─── Report Summary ───────────────────────────────────────────────────
         [HttpGet("report")]
         public async Task<IActionResult> GetReportSummary([FromQuery] string period = "today")
         {
@@ -642,7 +634,6 @@ namespace astratech_apps_backend.Controllers
             return Ok(result);
         }
 
-        // ── AC Settings ───────────────────────────────────────────────────────────
 
         [HttpGet("devices/{deviceId}/ac-settings")]
         public async Task<IActionResult> GetAcSettings(string deviceId)
@@ -653,7 +644,6 @@ namespace astratech_apps_backend.Controllers
             var settings = await _repo.GetAcSettingsAsync(deviceId);
             if (settings == null)
             {
-                // Return defaults if no record exists yet
                 return Ok(new { temperature = 22, mode = "Cool", fanSpeed = "Auto", swingMode = "Auto" });
             }
             return Ok(settings);
@@ -692,7 +682,7 @@ namespace astratech_apps_backend.Controllers
             if (string.IsNullOrWhiteSpace(dto.NewUsername))
                 return BadRequest(new { message = "Username baru tidak boleh kosong." });
 
-            var success = await _repo.UpdateUsernameSelfAsync(currentUsername, dto.NewUsername.Trim());
+            await _repo.UpdateUsernameSelfAsync(currentUsername, dto.NewUsername.Trim());
             return Ok(new { message = "Username berhasil diperbarui di database." });
         }
     }

@@ -28,11 +28,7 @@ namespace astratech_apps_backend.Services.Implementations
 
             _mqttOptions = new MqttClientOptionsBuilder()
                 .WithTcpServer("astratech.id", 1883)
-                .WithClientId("CSharp_Backend_MQTT_Daemon_" + Guid.NewGuid().ToString().Substring(0, 5))
-                .WithCleanSession()
-                .Build();
-
-            // Set event handlers
+                .WithClientId(string.Concat("CSharp_Backend_MQTT_Daemon_",Guid.NewGuid().ToString().AsSpan(0, 5))).WithCleanSession().Build();
             _mqttClient.ApplicationMessageReceivedAsync += OnMessageReceivedAsync;
             _mqttClient.DisconnectedAsync += OnDisconnectedAsync;
         }
@@ -51,7 +47,6 @@ namespace astratech_apps_backend.Services.Implementations
                         await _mqttClient.ConnectAsync(_mqttOptions, stoppingToken);
                         _logger.LogInformation("SUKSES terhubung ke MQTT Broker!");
 
-                        // Subscribe topics
                         var topics = new[] { 
                             "valTemp0011", 
                             "valHumi00112", 
@@ -131,19 +126,17 @@ namespace astratech_apps_backend.Services.Implementations
 
             try
             {
-                // Baca data meteran listrik PMGedungA, B, C, D
                 if (topic.StartsWith("PMGedung", StringComparison.OrdinalIgnoreCase))
                 {
-                    string gedungChar = topic.Substring("PMGedung".Length).ToUpper();
+                    string gedungChar = topic["PMGedung".Length..].ToUpper();
                     string targetDevId = $"DEV_PWR_{gedungChar}";
 
                     using var doc = JsonDocument.Parse(payload);
                     if (doc.RootElement.TryGetProperty("totalkw", out var powerElement))
                     {
                         double kw = powerElement.GetDouble();
-                        double watt = kw * 1000.0; // Konversi kW ke Watt agar konsisten dengan DB/UI
+                        double watt = kw * 1000.0;
 
-                        // Validasi agar tidak terjadi overflow di kolom decimal database
                         if (double.IsNaN(watt) || double.IsInfinity(watt) || watt > 99999999999999.0 || watt < -99999999999999.0)
                         {
                             _logger.LogWarning("Mengabaikan data telemetri PMGedung{GedungChar} karena nilai tidak valid/overflow: {Value} Watt", gedungChar, watt);
@@ -152,7 +145,6 @@ namespace astratech_apps_backend.Services.Implementations
                         {
                             await SaveTelemetryToDatabaseAsync(targetDevId, watt, "Power");
                             
-                            // Juga simpan ke DEV_PWR01 untuk kompabilitas ke belakang bagi Gedung C
                             if (gedungChar == "C")
                             {
                                 await SaveTelemetryToDatabaseAsync("DEV_PWR01", watt, "Power");
@@ -162,11 +154,9 @@ namespace astratech_apps_backend.Services.Implementations
                     return;
                 }
 
-                // Baca data debit air esp32/water
                 if ("esp32/water".Equals(topic, StringComparison.OrdinalIgnoreCase))
                 {
-                    double val = 0.0;
-                    if (double.TryParse(payload, NumberStyles.Any, CultureInfo.InvariantCulture, out val))
+                    if (double.TryParse(payload, NumberStyles.Any, CultureInfo.InvariantCulture, out double val))
                     {
                         await SaveTelemetryToDatabaseAsync("DEV_WAT01", val, "WaterFlow");
                     }
@@ -193,8 +183,6 @@ namespace astratech_apps_backend.Services.Implementations
                 }
 
 
-
-                // Cek jika menggunakan pola topik baru device/+/sensor/+ atau device/+/status
                 string[] parts = topic.Split('/');
                 if (parts.Length >= 3 && "device".Equals(parts[0], StringComparison.OrdinalIgnoreCase))
                 {
@@ -226,7 +214,6 @@ namespace astratech_apps_backend.Services.Implementations
                     return;
                 }
 
-                // Logika parser payload format: MAC;VALUE (misal: B8:F8:62:62:1E:84;28.7) atau angka murni
                 string processedPayload = payload;
                 string? parsedMac = null;
 
@@ -240,8 +227,12 @@ namespace astratech_apps_backend.Services.Implementations
                     }
                 }
 
-                double valueOld = 0.0;
-                bool isNumeric = double.TryParse(processedPayload, NumberStyles.Any, CultureInfo.InvariantCulture, out valueOld);
+                bool isNumeric = double.TryParse(
+                    processedPayload,
+                    NumberStyles.Any,
+                    CultureInfo.InvariantCulture,
+                    out double valueOld
+                );
 
                 if ("valTemp0011".Equals(topic) || "valTempS3".Equals(topic))
                 {
@@ -297,7 +288,6 @@ namespace astratech_apps_backend.Services.Implementations
                     {
                         if (!string.IsNullOrEmpty(parsedMac))
                         {
-                            // Update limit min based on MAC
                             await UpdateDeviceLimitMinByMacAsync(parsedMac, valueOld);
                         }
                         else
@@ -460,7 +450,6 @@ namespace astratech_apps_backend.Services.Implementations
 
                 if (device == null)
                 {
-                    // Auto-register device via Stored Procedure
                     await conn.ExecuteAsync(
                         "DEV_MST_AutoRegister",
                         new { lookupMac, deviceId, type = type == "Power" ? "Power Meter" : "Water Flow Meter" },

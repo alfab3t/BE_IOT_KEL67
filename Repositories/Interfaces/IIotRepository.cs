@@ -35,10 +35,8 @@ namespace astratech_apps_backend.Repositories.Interfaces
         Task<bool> MarkNotificationsAsReadBulkAsync(List<long> ids);
         Task<bool> DeleteNotificationsBulkAsync(List<long> ids);
 
-        // Report
         Task<ReportSummary> GetReportSummaryAsync(string period);
 
-        // User Management
         Task<UserListResponse> GetAllUsersAsync(string? keyword, string? roleId, string? status);
         Task<AppUser?> GetUserDetailAsync(string username, string? viewerUsername = null);
         Task<bool> SetUserStatusAsync(string username, string status, string updatedBy);
@@ -47,7 +45,6 @@ namespace astratech_apps_backend.Repositories.Interfaces
         Task<bool> DeleteUserAsync(string username);
         Task<bool> UpdateUsernameSelfAsync(string currentUsername, string newUsername);
 
-        // AC Settings
         Task<AcSettings?> GetAcSettingsAsync(string deviceId);
         Task<bool> SaveAcSettingsAsync(string deviceId, AcSettings settings, string username);
     }

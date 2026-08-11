@@ -13,7 +13,7 @@ namespace astratech_apps_backend.Repositories.Implementations
     {
         private readonly string _conn = dbConfig.ConnectionStringSIA;
         private readonly ILogger<IotRepository> _logger = logger;
-        private static readonly Dictionary<string, AcSettings> _acSettingsCache = new();
+        private static readonly Dictionary<string, AcSettings> _acSettingsCache = [];
 
         public async Task<string> CreateDeviceAsync(CreateDeviceRequest dto, string username)
         {
@@ -50,17 +50,39 @@ namespace astratech_apps_backend.Repositories.Implementations
                 await using var conn = new SqlConnection(_conn);
 
                 string lookupMac = DeviceMapping.GetMac(dto.Id);
+
                 var devRow = await conn.QueryFirstOrDefaultAsync<dynamic>(
                     "DEV_MST_GetByMacOrName",
                     new { id = dto.Id, lookupMac },
                     commandType: CommandType.StoredProcedure
                 );
 
-                int devId = devRow != null && devRow.dev_id != null ? Convert.ToInt32(devRow.dev_id) : 0;
-                if (devId == 0 && int.TryParse(dto.Id, out int pId)) devId = pId;
+                int devId = 0;
+                string mac = lookupMac;
+                int ruaId = 1;
 
-                string mac = devRow != null && devRow.dev_mac_address != null ? (string)devRow.dev_mac_address : lookupMac;
-                int ruaId = devRow != null && devRow.rua_id != null ? Convert.ToInt32(devRow.rua_id) : 1;
+                if (devRow != null)
+                {
+                    var row = (IDictionary<string, object>)devRow;
+
+                    if (row.TryGetValue("dev_id", out var devIdValue) && devIdValue != null)
+                    {
+                        devId = Convert.ToInt32(devIdValue);
+                    }
+
+                    if (row.TryGetValue("dev_mac_address", out var macValue) && macValue != null)
+                    {
+                        mac = Convert.ToString(macValue) ?? lookupMac;
+                    }
+
+                    if (row.TryGetValue("rua_id", out var ruaIdValue) && ruaIdValue != null)
+                    {
+                        ruaId = Convert.ToInt32(ruaIdValue);
+                    }
+                }
+
+                if (devId == 0 && int.TryParse(dto.Id, out int pId))
+                    devId = pId;
 
                 var parameters = new DynamicParameters();
                 parameters.Add("@p_dev_id", devId);
@@ -70,16 +92,24 @@ namespace astratech_apps_backend.Repositories.Implementations
                 parameters.Add("@p_dev_type", dto.Category);
                 parameters.Add("@p_dev_modified_by", username);
 
-                await conn.ExecuteAsync("DEV_MST_Update", parameters, commandType: CommandType.StoredProcedure);
+                await conn.ExecuteAsync(
+                    "DEV_MST_Update",
+                    parameters,
+                    commandType: CommandType.StoredProcedure);
+
                 return true;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Gagal mengupdate device: {Id} | User: {Username}", dto.Id, username);
+                _logger.LogError(
+                    ex,
+                    "Gagal mengupdate device: {Id} | User: {Username}",
+                    dto.Id,
+                    username);
+
                 return false;
             }
         }
-
         private static string MapCategoryForFrontend(string dbType, string stringId)
         {
             if (string.IsNullOrEmpty(dbType)) dbType = "";
@@ -148,12 +178,14 @@ namespace astratech_apps_backend.Repositories.Implementations
                 if (!string.IsNullOrEmpty(dto.SearchKeyword))
                 {
                     string kw = dto.SearchKeyword.ToLower();
-                    list = list.Where(d => d.Name.ToLower().Contains(kw) || d.Ruangan.ToLower().Contains(kw)).ToList();
+                    list = [.. list.Where(d =>
+                        (d.Name ?? "").Contains(kw, StringComparison.OrdinalIgnoreCase) ||
+                        (d.Ruangan ?? "").Contains(kw, StringComparison.OrdinalIgnoreCase))];
                 }
 
                 if (!string.IsNullOrEmpty(dto.Category) && !dto.Category.Equals("Semua", StringComparison.OrdinalIgnoreCase))
                 {
-                    list = list.Where(d => d.Category.Equals(dto.Category, StringComparison.OrdinalIgnoreCase)).ToList();
+                    list = [..list.Where(d => d.Category.Equals(dto.Category, StringComparison.OrdinalIgnoreCase)).ToList()];
                 }
 
                 int totalData = list.Count;
@@ -195,7 +227,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                         Ruangan = "Lab IoT",
                         Gedung = "Gedung Utama",
                         IsActive = true,
-                        LocationHistory = new List<LocationHistoryItem>()
+                        LocationHistory = []
                     };
                 }
 
@@ -242,11 +274,10 @@ namespace astratech_apps_backend.Repositories.Implementations
                             commandType: CommandType.StoredProcedure
                         );
 
-                        var locLogs = logs != null ? logs.Where(l => {
+                        var locLogs = logs != null ? [.. logs.Where(l => {
                             IDictionary<string, object> dict = (IDictionary<string, object>)l;
-                            string status = dict.ContainsKey("lok_status") && dict["lok_status"] != null ? dict["lok_status"].ToString()! : "";
-                            string cmdText = dict.ContainsKey("lok_perintah") && dict["lok_perintah"] != null ? dict["lok_perintah"].ToString()! : "";
-                            
+                            string status = dict.TryGetValue("lok_status", out var statusValue) && statusValue != null? statusValue.ToString()!: "";
+                            string cmdText = dict.TryGetValue("lok_perintah", out var cmdValue) && cmdValue != null? cmdValue.ToString()!: "";
                             bool isStatusOrPowerCmd = 
                                 cmdText.Equals("ON", StringComparison.OrdinalIgnoreCase) || 
                                 cmdText.Equals("OFF", StringComparison.OrdinalIgnoreCase) || 
@@ -263,38 +294,58 @@ namespace astratech_apps_backend.Repositories.Implementations
                                    cmdText.Contains("Ruang", StringComparison.OrdinalIgnoreCase) ||
                                    cmdText.Contains("Gedung", StringComparison.OrdinalIgnoreCase) ||
                                    cmdText.Contains("cb", StringComparison.OrdinalIgnoreCase) ||
-                                   cmdText.Contains("(");
-                        }).ToList() : new List<dynamic>();
+                                   cmdText.Contains('(');
+                        })] : new List<dynamic>();
 
                         if (locLogs.Count > 0)
                         {
-                            Func<string, string, string> cleanRoom = (rawStr, defaultRoom) =>
+                            static string cleanRoom(string rawStr, string defaultRoom)
                             {
-                                if (string.IsNullOrWhiteSpace(rawStr)) return defaultRoom;
+                                if (string.IsNullOrWhiteSpace(rawStr))
+                                    return defaultRoom;
+
                                 string s = rawStr.Trim();
+
                                 if (s.StartsWith("Dipindahkan ke ", StringComparison.OrdinalIgnoreCase))
-                                    s = s.Substring("Dipindahkan ke ".Length);
+                                    s = s["Dipindahkan ke ".Length..];
                                 else if (s.StartsWith("Dipindahkan ", StringComparison.OrdinalIgnoreCase))
-                                    s = s.Substring("Dipindahkan ".Length);
-                                else if (s.Equals("Dipindahkan", StringComparison.OrdinalIgnoreCase) || s.Equals("Dipindahka", StringComparison.OrdinalIgnoreCase))
+                                    s = s["Dipindahkan ".Length..];
+                                else if (s.Equals("Dipindahkan", StringComparison.OrdinalIgnoreCase) ||
+                                         s.Equals("Dipindahka", StringComparison.OrdinalIgnoreCase))
                                     return defaultRoom;
 
                                 return string.IsNullOrWhiteSpace(s) ? defaultRoom : s;
-                            };
+                            }
 
-                            var rawParsed = locLogs.Select(l => {
+                            var rawParsed = locLogs.Select(l =>
+                            {
                                 IDictionary<string, object> lDict = (IDictionary<string, object>)l;
-                                object? tsObj = lDict.ContainsKey("lok_timestamp") && lDict["lok_timestamp"] != null ? lDict["lok_timestamp"] : null;
-                                DateTime dt = tsObj != null ? Convert.ToDateTime(tsObj) : DateTime.Now;
-                                string rawCmd = lDict.ContainsKey("lok_perintah") && lDict["lok_perintah"] != null ? lDict["lok_perintah"].ToString()! : "";
-                                string by = lDict.ContainsKey("use_id") && lDict["use_id"] != null ? lDict["use_id"].ToString()! : (lDict.ContainsKey("lok_created_by") && lDict["lok_created_by"] != null ? lDict["lok_created_by"].ToString()! : "Admin");
-                                
+
+                                object? tsObj = lDict.TryGetValue("lok_timestamp", out var timestampValue) && timestampValue != null
+                                    ? timestampValue
+                                    : null;
+
+                                DateTime dt = tsObj != null
+                                    ? Convert.ToDateTime(tsObj)
+                                    : DateTime.Now;
+
+                                string rawCmd = lDict.TryGetValue("lok_perintah", out var commandValue) && commandValue != null
+                                    ? commandValue.ToString()!
+                                    : "";
+
+                                string by = lDict.TryGetValue("use_id", out var userValue) && userValue != null
+                                    ? userValue.ToString()!
+                                    : lDict.TryGetValue("lok_created_by", out var createdByValue) && createdByValue != null
+                                        ? createdByValue.ToString()!
+                                        : "Admin";
+
                                 string roomName = cleanRoom(rawCmd, ruangan);
+
                                 return new { dt, rawCmd, roomName, by };
                             }).OrderBy(x => x.dt).ToList();
 
                             var roomGroups = new List<(string RoomName, DateTime StartDt, DateTime EndDt, string UpdatedBy)>();
-                            if (rawParsed.Any())
+                            if (rawParsed.Count > 0)
                             {
                                 string curRoom = rawParsed[0].roomName;
                                 DateTime sDt = rawParsed[0].dt;
@@ -321,6 +372,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                                 roomGroups.Add((curRoom, sDt, eDt, curBy));
                             }
 
+                            #pragma warning disable IDE0042
                             for (int i = 0; i < roomGroups.Count; i++)
                             {
                                 var grp = roomGroups[i];
@@ -381,6 +433,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                             }
 
                             realHistory.Reverse();
+                            #pragma warning restore IDE0042
                         }
                     }
                     catch (Exception ex)
@@ -420,14 +473,12 @@ namespace astratech_apps_backend.Repositories.Implementations
 
                 await using var conn = new SqlConnection(_conn);
 
-                // 1. Update status di MST_Device
                 await conn.ExecuteAsync(
                     "DEV_MST_SetStatus",
                     new { devId, lookupMac, id, statusStr = status, username },
                     commandType: CommandType.StoredProcedure
                 );
 
-                // 2. Catat log kontrol di TRX_LogKontrol
                 var parameters = new
                 {
                     p_dev_id = devId,
@@ -659,14 +710,38 @@ namespace astratech_apps_backend.Repositories.Implementations
             {
                 await using var conn = new SqlConnection(_conn);
                 var result = await conn.QueryAsync<dynamic>("RUA_MST_GetAll", commandType: CommandType.StoredProcedure);
-                
-                var list = result.Select(row => {
+
+                var list = result.Select(row =>
+                {
                     IDictionary<string, object> dict = (IDictionary<string, object>)row;
-                    int rId = dict.ContainsKey("rua_id") && dict["rua_id"] != null ? Convert.ToInt32(dict["rua_id"]) : (dict.ContainsKey("Id") && dict["Id"] != null ? Convert.ToInt32(dict["Id"]) : 0);
-                    string rGedung = dict.ContainsKey("rua_gedung") && dict["rua_gedung"] != null ? Convert.ToString(dict["rua_gedung"])! : (dict.ContainsKey("Building") && dict["Building"] != null ? Convert.ToString(dict["Building"])! : "Gedung Utama");
-                    string rLantai = dict.ContainsKey("rua_lantai") && dict["rua_lantai"] != null ? Convert.ToString(dict["rua_lantai"])! : "1";
-                    string rNama = dict.ContainsKey("rua_nama") && dict["rua_nama"] != null ? Convert.ToString(dict["rua_nama"])! : (dict.ContainsKey("Name") && dict["Name"] != null ? Convert.ToString(dict["Name"])! : "Ruangan");
-                    string rStatus = dict.ContainsKey("rua_status") && dict["rua_status"] != null ? Convert.ToString(dict["rua_status"])! : (dict.ContainsKey("Status") && dict["Status"] != null ? Convert.ToString(dict["Status"])! : "Aktif");
+
+                    int rId = dict.TryGetValue("rua_id", out var ruaIdValue) && ruaIdValue != null
+                        ? Convert.ToInt32(ruaIdValue)
+                        : dict.TryGetValue("Id", out var idValue) && idValue != null
+                            ? Convert.ToInt32(idValue)
+                            : 0;
+
+                    string rGedung = dict.TryGetValue("rua_gedung", out var gedungValue) && gedungValue != null
+                        ? Convert.ToString(gedungValue)!
+                        : dict.TryGetValue("Building", out var buildingValue) && buildingValue != null
+                            ? Convert.ToString(buildingValue)!
+                            : "Gedung Utama";
+
+                    string rLantai = dict.TryGetValue("rua_lantai", out var lantaiValue) && lantaiValue != null
+                        ? Convert.ToString(lantaiValue)!
+                        : "1";
+
+                    string rNama = dict.TryGetValue("rua_nama", out var namaValue) && namaValue != null
+                        ? Convert.ToString(namaValue)!
+                        : dict.TryGetValue("Name", out var nameValue) && nameValue != null
+                            ? Convert.ToString(nameValue)!
+                            : "Ruangan";
+
+                    string rStatus = dict.TryGetValue("rua_status", out var statusValue) && statusValue != null
+                        ? Convert.ToString(statusValue)!
+                        : dict.TryGetValue("Status", out var statusValue2) && statusValue2 != null
+                            ? Convert.ToString(statusValue2)!
+                            : "Aktif";
 
                     return new Location
                     {
@@ -735,7 +810,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                 );
 
                 if (result == null) return [];
-                return result.Select(row => {
+                return [.. result.Select(row => {
                     decimal? limitMin = null;
                     decimal? limitMax = null;
                     string category = row.dev_type != null ? Convert.ToString(row.dev_type)! : "";
@@ -766,10 +841,10 @@ namespace astratech_apps_backend.Repositories.Implementations
 
                     return new Device
                     {
-                        Id = stringId,
+                        Id = stringId ?? string.Empty,
                         MacAddress = mac,
-                        Name = name,
-                        Category = MapCategoryForFrontend(category, stringId),
+                        Name = name ?? string.Empty,
+                        Category = MapCategoryForFrontend(category ?? string.Empty, stringId ?? string.Empty),
                         Status = status,
                         LimitMin = limitMin,
                         LimitMax = limitMax,
@@ -779,7 +854,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                         Gedung = row.rua_gedung != null ? Convert.ToString(row.rua_gedung)! : "Gedung Utama",
                         Lantai = row.rua_lantai != null ? Convert.ToString(row.rua_lantai)! : "1"
                     };
-                }).ToList();
+                })];
             }
             catch (Exception ex)
             {
@@ -821,13 +896,13 @@ namespace astratech_apps_backend.Repositories.Implementations
                     commandType: CommandType.StoredProcedure
                 );
                 if (result == null) return [];
-                return result.Select(row => new GraphPoint
+                return [.. result.Select(row => new GraphPoint
                 {
                     AverageValue = (decimal)(row.AverageValue ?? 0m),
                     MaximumValue = (decimal)(row.MaximumValue ?? 0m),
                     MinimumValue = (decimal)(row.MinimumValue ?? 0m),
                     LabelText = (string)(row.LabelText ?? "00:00")
-                }).ToList();
+                })];
             }
             catch (Exception ex)
             {
@@ -850,13 +925,13 @@ namespace astratech_apps_backend.Repositories.Implementations
                     commandType: CommandType.StoredProcedure
                 );
                 if (result == null) return [];
-                return result.Select(row => new GraphPoint
+                return [.. result.Select(row => new GraphPoint
                 {
                     AverageValue = (decimal)(row.AverageValue ?? 0m),
                     MaximumValue = (decimal)(row.MaximumValue ?? 0m),
                     MinimumValue = (decimal)(row.MinimumValue ?? 0m),
                     LabelText = (string)(row.LabelText ?? "00:00")
-                }).ToList();
+                })];
             }
             catch (Exception ex)
             {
@@ -885,7 +960,7 @@ namespace astratech_apps_backend.Repositories.Implementations
             {
                 await using var conn = new SqlConnection(_conn);
                 var result = await conn.QueryAsync<dynamic>("IOT_SP_Notification_Get", new { Username = username }, commandType: CommandType.StoredProcedure);
-                return result.Select(row => new Notification
+                return [..result.Select(row => new Notification
                 {
                     Id = (long)row.not_id,
                     DeviceId = (string)row.dev_id,
@@ -893,7 +968,7 @@ namespace astratech_apps_backend.Repositories.Implementations
                     Message = (string)row.not_message,
                     Status = (string)row.not_status,
                     TriggeredDate = (DateTime)row.not_triggered_date
-                }).ToList();
+                })];
             }
             catch (Exception ex)
             {
@@ -964,13 +1039,13 @@ namespace astratech_apps_backend.Repositories.Implementations
 
                 if (result == null) return [];
 
-                return result.Select(row => new GraphPoint
+                return [..result.Select(row => new GraphPoint
                 {
                     AverageValue = (decimal)(row.AverageValue ?? 0m),
                     MaximumValue = (decimal)(row.MaximumValue ?? 0m),
                     MinimumValue = (decimal)(row.MinimumValue ?? 0m),
                     LabelText = (string)(row.LabelText ?? "00:00")
-                }).ToList();
+                })];
             }
             catch (Exception ex)
             {
@@ -1217,10 +1292,19 @@ namespace astratech_apps_backend.Repositories.Implementations
             }
         }
 
-        public async Task<AcSettings?> GetAcSettingsAsync(string deviceId)
+        public Task<AcSettings?> GetAcSettingsAsync(string deviceId)
         {
-            if (_acSettingsCache.TryGetValue(deviceId, out var cached)) return cached;
-            return new AcSettings { Temperature = 22, Mode = "Cool", FanSpeed = "Auto", SwingMode = "Auto" };
+            if (_acSettingsCache.TryGetValue(deviceId, out var cached))
+                return Task.FromResult<AcSettings?>(cached);
+
+            return Task.FromResult<AcSettings?>(
+                new AcSettings
+                {
+                    Temperature = 22,
+                    Mode = "Cool",
+                    FanSpeed = "Auto",
+                    SwingMode = "Auto"
+                });
         }
 
         public async Task<bool> SaveAcSettingsAsync(string deviceId, AcSettings settings, string username)
