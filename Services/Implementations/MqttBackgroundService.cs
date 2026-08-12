@@ -362,7 +362,7 @@ namespace astratech_apps_backend.Services.Implementations
                 await using var conn = new SqlConnection(_connSia);
                 var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
                     "DEV_MST_GetByMac",
-                    new { mac },
+                    new { lookupMac = mac },
                     commandType: CommandType.StoredProcedure);
 
                 if (device != null)
@@ -404,7 +404,7 @@ namespace astratech_apps_backend.Services.Implementations
                 await using var conn = new SqlConnection(_connSia);
                 var device = await conn.QueryFirstOrDefaultAsync<dynamic>(
                     "DEV_MST_GetByMac",
-                    new { mac },
+                    new { lookupMac = mac },
                     commandType: CommandType.StoredProcedure);
 
                 if (device != null)
