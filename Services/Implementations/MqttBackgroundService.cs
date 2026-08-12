@@ -35,7 +35,7 @@ namespace astratech_apps_backend.Services.Implementations
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
-            _logger.LogInformation("=== ASTRATECH MQTT BACKGROUND SERVICE STARTED ===");
+            _logger.LogInformation("=== ASTRATECH MQTT SERVICE STARTED ===");
 
             while (!stoppingToken.IsCancellationRequested)
             {
