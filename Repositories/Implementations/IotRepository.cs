@@ -1156,16 +1156,21 @@ namespace astratech_apps_backend.Repositories.Implementations
             }
         }
 
-        public async Task<bool> CreateUserAsync(string username, string roleInput, string status, string createdBy, string? email = null, string? password = null, string? photo = null)
+        public async Task<bool> CreateUserAsync(string username,string roleInput,string status, string createdBy,string? email = null,string? password = null,string? photo = null)
         {
             try
             {
                 await using var conn = new SqlConnection(_conn);
+
                 string dbRoleId = "ROL03";
                 string rLower = (roleInput ?? "").ToLower();
-                if (rLower.Contains("admin") || rLower == "rol01" || rLower == "rol001") dbRoleId = "ROL01";
-                else if (rLower.Contains("owner") || rLower.Contains("controller") || rLower == "rol02" || rLower == "rol002") dbRoleId = "ROL02";
-                else if (rLower.Contains("viewer") || rLower == "rol03" || rLower == "rol003") dbRoleId = "ROL03";
+
+                if (rLower.Contains("admin") || rLower == "rol01" || rLower == "rol001")
+                    dbRoleId = "ROL01";
+                else if (rLower.Contains("owner") || rLower.Contains("controller") || rLower == "rol02" || rLower == "rol002")
+                    dbRoleId = "ROL02";
+                else if (rLower.Contains("viewer") || rLower == "rol03" || rLower == "rol003")
+                    dbRoleId = "ROL03";
 
                 string safeStatus = string.IsNullOrEmpty(status) ? "Aktif" : status;
                 string safeCreator = string.IsNullOrEmpty(createdBy) ? "admin" : createdBy;
@@ -1190,31 +1195,61 @@ namespace astratech_apps_backend.Repositories.Implementations
 
                 if (!string.IsNullOrWhiteSpace(photo))
                 {
-                    UserService.PhotoCache[username.Trim()] = photo; 
+                    UserService.PhotoCache[username.Trim()] = photo;
                 }
 
                 return true;
             }
+            catch (SqlException ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Gagal membuat pengguna IoT baru: {Username}",
+                    username
+                );
+
+                throw;
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Gagal membuat pengguna IoT baru: {Username}", username);
+                _logger.LogError(
+                    ex,
+                    "Gagal membuat pengguna IoT baru: {Username}",
+                    username
+                );
+
                 return false;
             }
         }
 
-        public async Task<bool> UpdateUserAsync(string username, string roleInput, string status, string updatedBy, string? email = null, string? password = null, string? photo = null)
+        public async Task<bool> UpdateUserAsync(string username, string roleInput,string status,string updatedBy,string? email = null,string? password = null,string? photo = null)
         {
             try
             {
                 await using var conn = new SqlConnection(_conn);
+
                 string dbRoleId = "ROL03";
                 string rLower = (roleInput ?? "").ToLower();
-                if (rLower.Contains("admin") || rLower == "rol01" || rLower == "rol001") dbRoleId = "ROL01";
-                else if (rLower.Contains("owner") || rLower.Contains("controller") || rLower == "rol02" || rLower == "rol002") dbRoleId = "ROL02";
-                else if (rLower.Contains("viewer") || rLower == "rol03" || rLower == "rol003") dbRoleId = "ROL03";
 
-                string safeStatus = string.IsNullOrEmpty(status) ? "Aktif" : status;
-                string safeUpdater = string.IsNullOrEmpty(updatedBy) ? "admin" : updatedBy;
+                if (rLower.Contains("admin") || rLower == "rol01" || rLower == "rol001")
+                    dbRoleId = "ROL01";
+                else if (rLower.Contains("owner") ||
+                         rLower.Contains("controller") ||
+                         rLower == "rol02" ||
+                         rLower == "rol002")
+                    dbRoleId = "ROL02";
+                else if (rLower.Contains("viewer") ||
+                         rLower == "rol03" ||
+                         rLower == "rol003")
+                    dbRoleId = "ROL03";
+
+                string safeStatus = string.IsNullOrEmpty(status)
+                    ? "Aktif"
+                    : status;
+
+                string safeUpdater = string.IsNullOrEmpty(updatedBy)
+                    ? "admin"
+                    : updatedBy;
 
                 string? passwordHash = !string.IsNullOrWhiteSpace(password)
                     ? BCrypt.Net.BCrypt.HashPassword(password)
@@ -1236,20 +1271,34 @@ namespace astratech_apps_backend.Repositories.Implementations
                 );
 
                 string key = username.Trim();
+
                 if (!string.IsNullOrWhiteSpace(photo))
                 {
-                    UserService.PhotoCache[key] = photo;   
+                    UserService.PhotoCache[key] = photo;
                 }
                 else
                 {
-                    UserService.PhotoCache.Remove(key);     
+                    UserService.PhotoCache.Remove(key);
                 }
 
                 return true;
             }
+            catch (SqlException ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "Gagal mengupdate pengguna IoT: {Username}",
+                    username);
+
+                throw;
+            }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Gagal mengupdate pengguna IoT: {Username}", username);
+                _logger.LogError(
+                    ex,
+                    "Gagal mengupdate pengguna IoT: {Username}",
+                    username);
+
                 return false;
             }
         }
@@ -1313,24 +1362,33 @@ namespace astratech_apps_backend.Repositories.Implementations
             return await Task.FromResult(true);
         }
 
-        public async Task<bool> UpdateUsernameSelfAsync(string currentUsername, string newUsername)
+        public async Task<bool> UpdateUsernameSelfAsync(string currentUsername,string newUsername)
         {
             try
             {
                 await using var conn = new SqlConnection(_conn);
+
                 await conn.ExecuteAsync(
-                    "USR_MST_UpdateUsername",
-                    new { currentUsername, newUsername },
+                    "USE_MST_UpdateUsername",
+                    new
+                    {
+                        currentUsername = currentUsername.Trim(),
+                        newUsername = newUsername.Trim()
+                    },
                     commandType: CommandType.StoredProcedure
                 );
 
-                if (!string.IsNullOrWhiteSpace(currentUsername) && !string.IsNullOrWhiteSpace(newUsername))
+                if (!string.IsNullOrWhiteSpace(currentUsername) &&
+                    !string.IsNullOrWhiteSpace(newUsername))
                 {
                     string oldKey = currentUsername.Trim();
                     string newKey = newUsername.Trim();
-                    if (UserService.PhotoCache.TryGetValue(oldKey, out var photo) && !string.IsNullOrEmpty(photo))
+
+                    if (UserService.PhotoCache.TryGetValue(oldKey, out var photo) &&
+                        !string.IsNullOrEmpty(photo))
                     {
                         UserService.PhotoCache[newKey] = photo;
+                        UserService.PhotoCache.Remove(oldKey);
                     }
                 }
 
@@ -1338,7 +1396,12 @@ namespace astratech_apps_backend.Repositories.Implementations
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Gagal mengubah username dari {Old} ke {New}", currentUsername, newUsername);
+                _logger.LogError(
+                    ex,
+                    "Gagal mengubah username dari {Old} ke {New}",
+                    currentUsername,
+                    newUsername);
+
                 return false;
             }
         }

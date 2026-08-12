@@ -4,6 +4,7 @@ using astratech_apps_backend.Repositories.Interfaces;
 using astratech_apps_backend.Services.Implementations;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.SqlClient;
 using System.Security.Claims;
 
 namespace astratech_apps_backend.Controllers
@@ -18,10 +19,10 @@ namespace astratech_apps_backend.Controllers
 
         private string GetCurrentUsername()
         {
-            var username = User.FindFirstValue("namaakun") 
-                ?? User.FindFirstValue(ClaimTypes.NameIdentifier) 
-                ?? User.FindFirstValue(ClaimTypes.Name) 
-                ?? User.FindFirstValue("sub") 
+            var username = User.FindFirstValue("namaakun")
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? User.FindFirstValue(ClaimTypes.Name)
+                ?? User.FindFirstValue("sub")
                 ?? User.Identity?.Name;
             return string.IsNullOrEmpty(username) ? "admin" : username;
         }
@@ -35,7 +36,7 @@ namespace astratech_apps_backend.Controllers
             if (string.IsNullOrEmpty(username)) return Unauthorized();
 
             var (list, totalData) = await _repo.GetAllDevicesAsync(dto);
-            var response = new 
+            var response = new
             {
                 Data = list,
                 TotalData = totalData,
@@ -66,7 +67,7 @@ namespace astratech_apps_backend.Controllers
             if (string.IsNullOrEmpty(username)) return Unauthorized();
 
             var newId = await _repo.CreateDeviceAsync(dto, username);
-            if (string.IsNullOrEmpty(newId)) 
+            if (string.IsNullOrEmpty(newId))
                 return BadRequest(new { message = "Gagal menambahkan device baru." });
 
             return Ok(new { message = "Device berhasil disimpan.", id = newId });
@@ -161,9 +162,9 @@ namespace astratech_apps_backend.Controllers
 
                 var lampMacs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    "84:F3:EB:B4:51:4F", 
-                    "97:89:1D:AD:FE:4A", 
-                    "E5:B5:54:7C:5C:18"  
+                    "84:F3:EB:B4:51:4F",
+                    "97:89:1D:AD:FE:4A",
+                    "E5:B5:54:7C:5C:18"
                 };
                 if (!string.IsNullOrEmpty(mac)) lampMacs.Add(mac);
 
@@ -185,7 +186,7 @@ namespace astratech_apps_backend.Controllers
 
                 var acMacs = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
                 {
-                    "B8:F8:62:62:1E:84" 
+                    "B8:F8:62:62:1E:84"
                 };
                 if (!string.IsNullOrEmpty(mac)) acMacs.Add(mac);
 
@@ -585,30 +586,96 @@ namespace astratech_apps_backend.Controllers
         public async Task<IActionResult> CreateUser([FromBody] SaveUserRequest request)
         {
             var username = GetCurrentUsername();
-            if (string.IsNullOrEmpty(username)) return Unauthorized();
+
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized();
 
             if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.RoleId))
                 return BadRequest(new { message = "Username dan Role wajib diisi." });
 
-            var success = await _repo.CreateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password, request.Photo); 
-            if (!success) return BadRequest(new { message = "Gagal menambahkan pengguna baru. Kemungkinan username sudah terdaftar." });
+            try
+            {
+                var success = await _repo.CreateUserAsync(
+                    request.Username,
+                    request.RoleId,
+                    request.Status ?? "Aktif",
+                    username,
+                    request.Email,
+                    request.Password,
+                    request.Photo
+                );
 
-            return Ok(new { message = "Pengguna baru berhasil ditambahkan." });
+                if (!success)
+                {
+                    return BadRequest(new
+                    {
+                        message = "Gagal menambahkan pengguna baru."
+                    });
+                }
+
+                return Ok(new
+                {
+                    message = "Pengguna baru berhasil ditambahkan."
+                });
+            }
+            catch (SqlException ex)
+            {
+                return BadRequest(new
+                {
+                    message = ex.Message
+                });
+            }
         }
 
         [HttpPut("users")]
         public async Task<IActionResult> UpdateUser([FromBody] SaveUserRequest request)
         {
             var username = GetCurrentUsername();
-            if (string.IsNullOrEmpty(username)) return Unauthorized();
 
-            if (string.IsNullOrEmpty(request.Username) || string.IsNullOrEmpty(request.RoleId))
-                return BadRequest(new { message = "Username dan Role wajib diisi." });
+            if (string.IsNullOrEmpty(username))
+                return Unauthorized();
 
-            var success = await _repo.UpdateUserAsync(request.Username, request.RoleId, request.Status ?? "Aktif", username, request.Email, request.Password, request.Photo); 
-            if (!success) return BadRequest(new { message = "Gagal memperbarui data pengguna." });
+            if (string.IsNullOrEmpty(request.Username) ||
+                string.IsNullOrEmpty(request.RoleId))
+            {
+                return BadRequest(new
+                {
+                    message = "Username dan Role wajib diisi."
+                });
+            }
 
-            return Ok(new { message = "Data pengguna berhasil diperbarui." });
+            try
+            {
+                var success = await _repo.UpdateUserAsync(
+                    request.Username,
+                    request.RoleId,
+                    request.Status ?? "Aktif",
+                    username,
+                    request.Email,
+                    request.Password,
+                    request.Photo
+                );
+
+                if (!success)
+                {
+                    return BadRequest(new
+                    {
+                        message = "Gagal memperbarui data pengguna."
+                    });
+                }
+
+                return Ok(new
+                {
+                    message = "Data pengguna berhasil diperbarui."
+                });
+            }
+            catch (SqlException ex)
+            {
+                return BadRequest(new
+                {
+                    message = ex.Message
+                });
+            }
         }
 
         [HttpDelete("users/{targetUsername}")]
@@ -658,9 +725,9 @@ namespace astratech_apps_backend.Controllers
             var settings = new astratech_apps_backend.DTOs.Iot.AcSettings
             {
                 Temperature = dto.Temperature,
-                Mode        = dto.Mode,
-                FanSpeed    = dto.FanSpeed,
-                SwingMode   = dto.SwingMode,
+                Mode = dto.Mode,
+                FanSpeed = dto.FanSpeed,
+                SwingMode = dto.SwingMode,
             };
 
             var success = await _repo.SaveAcSettingsAsync(deviceId, settings, username);
@@ -671,43 +738,63 @@ namespace astratech_apps_backend.Controllers
         [AllowAnonymous]
         [HttpPut("users/profile/username")]
         [HttpPost("users/profile/username")]
-        public async Task<IActionResult> UpdateSelfUsername([FromBody] UpdateUsernameRequest dto)
+        public async Task<IActionResult> UpdateSelfUsername(
+         [FromBody] UpdateUsernameRequest dto)
         {
-            var currentUsername = !string.IsNullOrWhiteSpace(dto.CurrentUsername) 
-                ? dto.CurrentUsername.Trim() 
+            var currentUsername = !string.IsNullOrWhiteSpace(dto.CurrentUsername)
+                ? dto.CurrentUsername.Trim()
                 : GetCurrentUsername();
 
-            if (string.IsNullOrEmpty(currentUsername)) currentUsername = "admin";
+            if (string.IsNullOrEmpty(currentUsername))
+                currentUsername = "admin";
 
             if (string.IsNullOrWhiteSpace(dto.NewUsername))
-                return BadRequest(new { message = "Username baru tidak boleh kosong." });
+                return BadRequest(new
+                {
+                    message = "Username baru tidak boleh kosong."
+                });
 
-            await _repo.UpdateUsernameSelfAsync(currentUsername, dto.NewUsername.Trim());
-            return Ok(new { message = "Username berhasil diperbarui di database." });
+            var success = await _repo.UpdateUsernameSelfAsync(
+                currentUsername,
+                dto.NewUsername.Trim()
+            );
+
+            if (!success)
+            {
+                return BadRequest(new
+                {
+                    message = "Username sudah terdaftar di sistem."
+                });
+            }
+
+            return Ok(new
+            {
+                message = "Username berhasil diperbarui di database."
+            });
         }
-    }
 
-    public class UpdateUsernameRequest
-    {
-        public string CurrentUsername { get; set; } = "";
-        public string NewUsername { get; set; } = "";
-    }
+        public class UpdateUsernameRequest
+        {
+            public string CurrentUsername { get; set; } = "";
+            public string NewUsername { get; set; } = "";
+        }
 
-    public class SaveUserRequest
-    {
-        public string Username { get; set; } = "";
-        public string RoleId { get; set; } = "";
-        public string? Status { get; set; }
-        public string? Email { get; set; }
-        public string? Password { get; set; }
-        public string? Photo { get; set; }
-    }
+        public class SaveUserRequest
+        {
+            public string Username { get; set; } = "";
+            public string RoleId { get; set; } = "";
+            public string? Status { get; set; }
+            public string? Email { get; set; }
+            public string? Password { get; set; }
+            public string? Photo { get; set; }
+        }
 
-    public class SaveAcSettingsRequest
-    {
-        public int Temperature { get; set; } = 22;
-        public string Mode { get; set; } = "Cool";
-        public string FanSpeed { get; set; } = "Auto";
-        public string SwingMode { get; set; } = "Auto";
+        public class SaveAcSettingsRequest
+        {
+            public int Temperature { get; set; } = 22;
+            public string Mode { get; set; } = "Cool";
+            public string FanSpeed { get; set; } = "Auto";
+            public string SwingMode { get; set; } = "Auto";
+        }
     }
 }
